@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Galamsey Activity Monitor</title>
+
+    <!-- Leaflet Map -->
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    >
+
+    <!-- Our CSS -->
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+</head>
+
+<body>
+
+    <!-- SIDEBAR -->
+
+    <aside class="sidebar">
+
+        <h2>GALERT</h2>
+
+        <p class="subtitle">
+            Galamsey Activity Monitor
+        </p>
+
+        <nav>
+
+            <a href="#" class="active">
+                Dashboard
+            </a>
+
+            <a href="#">
+                Sensors
+            </a>
+
+            <a href="#">
+                Activity
+            </a>
+
+            <a href="#">
+                Map
+            </a>
+
+            <a href="#">
+                Alerts
+            </a>
+
+        </nav>
+
+    </aside>
+
+
+    <!-- MAIN CONTENT -->
+
+    <main class="main">
+
+        <!-- HEADER -->
+
+        <header>
+
+            <div>
+                <h1>Monitoring Dashboard</h1>
+
+                <p>
+                    Real-time IoT activity monitoring
+                </p>
+            </div>
+
+            <div class="system-status">
+
+                <span class="status-dot"></span>
+
+                System Online
+
+            </div>
+
+        </header>
+
+
+        <!-- SUMMARY CARDS -->
+
+        <section class="cards">
+
+            <div class="card">
+
+                <h3>Activity Status</h3>
+
+                <div
+                    id="activityStatus"
+                    class="normal"
+                >
+                    NORMAL
+                </div>
+
+            </div>
+
+
+            <div class="card">
+
+                <h3>Vibration</h3>
+
+                <div class="value">
+
+                    <span id="vibration">
+                        0.00
+                    </span>
+
+                    m/s²
+
+                </div>
+
+            </div>
+
+
+            <div class="card">
+
+                <h3>GPS Status</h3>
+
+                <div id="gpsStatus">
+                    Waiting...
+                </div>
+
+            </div>
+
+
+            <div class="card">
+
+                <h3>Satellites</h3>
+
+                <div
+                    class="value"
+                    id="satellites"
+                >
+                    0
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- MAIN GRID -->
+
+        <section class="dashboard-grid">
+
+
+            <!-- ACTIVITY PANEL -->
+
+            <div class="panel">
+
+                <h2>Activity Information</h2>
+
+                <div class="activity-box">
+
+                    <p>
+                        Current Status
+                    </p>
+
+                    <h2 id="activityMessage">
+                        No suspicious activity detected
+                    </h2>
+
+                    <p>
+                        Vibration Level:
+                        <strong id="vibration2">
+                            0.00
+                        </strong>
+                        m/s²
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <!-- GPS PANEL -->
+
+            <div class="panel">
+
+                <h2>GPS Location</h2>
+
+                <div class="coordinates">
+
+                    <p>
+                        Latitude:
+                        <strong id="latitude">
+                            --
+                        </strong>
+                    </p>
+
+                    <p>
+                        Longitude:
+                        <strong id="longitude">
+                            --
+                        </strong>
+                    </p>
+
+                    <p>
+                        Altitude:
+                        <strong id="altitude">
+                            --
+                        </strong>
+                        m
+                    </p>
+
+                </div>
+
+            </div>
+
+
+        </section>
+
+
+        <!-- MAP -->
+
+        <section class="panel map-panel">
+
+            <h2>Activity Location</h2>
+
+            <div id="map"></div>
+
+        </section>
+
+
+    </main>
+
+
+    <!-- Leaflet JavaScript -->
+
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+    </script>
+
+
+    <!-- Our JavaScript -->
+
+    <script
+        src="{{ url_for('static', filename='script.js') }}">
+    </script>
+
+</body>
+
+</html>
