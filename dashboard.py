@@ -29,16 +29,6 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
 # ============================================================
 # LINUX / HARDWARE AUTO-DETECTION
-#
-# Raspberry Pi / Linux:
-#     Real hardware is used by default.
-#
-# Windows:
-#     Mock hardware is used by default.
-#
-# You can override this using .env:
-#
-# MOCK_HARDWARE=true
 # ============================================================
 
 IS_LINUX = os.name != "nt"
@@ -168,12 +158,51 @@ else:
 
 
 # ============================================================
+# BME/BMP280 LIBRARY
+# ============================================================
+
+# Your actual sensor was identified as BMP280
+# Chip ID = 0x58
+#
+# BMP280 provides:
+#   Temperature
+#   Pressure
+#   Altitude
+#
+# It does NOT provide humidity.
+
+if not MOCK_HARDWARE:
+
+    try:
+
+        import board
+        import busio
+        import adafruit_bmp280
+
+        BMP280_LIBRARY_AVAILABLE = True
+
+    except ImportError as e:
+
+        print(
+            f"[BMP280 WARNING] "
+            f"BMP280 library unavailable: {e}"
+        )
+
+        BMP280_LIBRARY_AVAILABLE = False
+
+else:
+
+    BMP280_LIBRARY_AVAILABLE = False
+
+
+# ============================================================
 # FLASK APPLICATION
 # ============================================================
 
 app = Flask(__name__)
 
 app.config["TEMPLATES_AUTO_RELOAD"] = True
+
 app.jinja_env.auto_reload = True
 
 
@@ -186,6 +215,15 @@ MPU6050_ADDRESS = 0x68
 PWR_MGMT_1 = 0x6B
 
 ACCEL_XOUT_H = 0x3B
+
+
+# ============================================================
+# BMP280 CONFIGURATION
+# ============================================================
+
+BMP280_ADDRESS = 0x76
+
+BMP280_SEA_LEVEL_PRESSURE = 1013.25
 
 
 # ============================================================
@@ -210,7 +248,10 @@ GPS_BAUDRATE = int(
 # ============================================================
 
 bus = None
+
 gps_serial = None
+
+bmp280 = None
 
 
 # ============================================================
@@ -221,6 +262,8 @@ def init_hardware():
 
     global bus
     global gps_serial
+    global bmp280
+
 
     # ========================================================
     # MOCK MODE
@@ -285,6 +328,62 @@ def init_hardware():
 
 
     # ========================================================
+    # REAL BMP280
+    # ========================================================
+
+    if BMP280_LIBRARY_AVAILABLE:
+
+        try:
+
+            # Use the same I2C bus as the MPU-6050.
+            #
+            # MPU-6050 = 0x68
+            # BMP280   = 0x76
+
+            i2c = busio.I2C(
+                board.SCL,
+                board.SDA
+            )
+
+
+            bmp280 = (
+                adafruit_bmp280
+                .Adafruit_BMP280_I2C(
+                    i2c,
+                    address=BMP280_ADDRESS
+                )
+            )
+
+
+            bmp280.sea_level_pressure = (
+                BMP280_SEA_LEVEL_PRESSURE
+            )
+
+
+            print(
+                "[HARDWARE] BMP280 initialized "
+                "successfully on I2C address 0x76"
+            )
+
+
+        except Exception as e:
+
+            print(
+                f"[HARDWARE WARNING] "
+                f"Could not initialize BMP280: {e}"
+            )
+
+            bmp280 = None
+
+    else:
+
+        print(
+            "[HARDWARE WARNING] "
+            "BMP280 library not available"
+        )
+
+
+    # ========================================================
     # REAL NEO-6M GPS
     # ========================================================
 
@@ -334,16 +433,10 @@ CRITICAL_THRESHOLD = 0.50
 # ALERT SETTINGS
 # ============================================================
 
-# HIGH must continue for 10 seconds
 HIGH_PERSISTENCE_SECONDS = 10
 
-
-# CRITICAL must continue for 2 seconds
 CRITICAL_PERSISTENCE_SECONDS = 2
 
-
-# Prevent repeated emails for the same event
-# 600 seconds = 10 minutes
 ALERT_COOLDOWN_SECONDS = 600
 
 
@@ -353,11 +446,31 @@ ALERT_COOLDOWN_SECONDS = 600
 
 sensor_data = {
 
+    # --------------------------------------------------------
+    # MPU-6050
+    # --------------------------------------------------------
+
     "vibration": 0.0,
 
     "activity_detected": False,
 
     "activity_level": "NORMAL",
+
+
+    # --------------------------------------------------------
+    # BMP280
+    # --------------------------------------------------------
+
+    "temperature": None,
+
+    "pressure": None,
+
+    "environment_altitude": None,
+
+
+    # --------------------------------------------------------
+    # GPS
+    # --------------------------------------------------------
 
     "gps_fixed": False,
 
@@ -371,6 +484,11 @@ sensor_data = {
 
     "location_name":
         "Waiting for GPS fix...",
+
+
+    # --------------------------------------------------------
+    # ALERT
+    # --------------------------------------------------------
 
     "alert_sent": False,
 
@@ -409,16 +527,13 @@ def get_reverse_geocode(lat, lon):
     try:
 
         lat_f = float(lat)
+
         lon_f = float(lon)
 
     except (ValueError, TypeError):
 
         return "Unknown Coordinates"
 
-
-    # --------------------------------------------------------
-    # Cache key
-    # --------------------------------------------------------
 
     cache_key = (
         round(lat_f, 4),
@@ -428,12 +543,10 @@ def get_reverse_geocode(lat, lon):
 
     if cache_key in _GEO_CACHE:
 
-        return _GEO_CACHE[cache_key]
+        return _GEO_CACHE[
+            cache_key
+        ]
 
-
-    # --------------------------------------------------------
-    # Nominatim URL
-    # --------------------------------------------------------
 
     url = (
         "https://nominatim.openstreetmap.org/reverse"
@@ -521,26 +634,36 @@ def get_reverse_geocode(lat, lon):
 
             elif suburb:
 
-                parts.append(suburb)
+                parts.append(
+                    suburb
+                )
 
             elif road:
 
-                parts.append(road)
+                parts.append(
+                    road
+                )
 
 
             if town and town not in parts:
 
-                parts.append(town)
+                parts.append(
+                    town
+                )
 
 
             if state and state not in parts:
 
-                parts.append(state)
+                parts.append(
+                    state
+                )
 
 
             if country and country not in parts:
 
-                parts.append(country)
+                parts.append(
+                    country
+                )
 
 
             resolved = (
@@ -588,10 +711,13 @@ def get_reverse_geocode(lat, lon):
 # ============================================================
 
 DB_PATH = os.path.join(
+
     os.path.dirname(
         os.path.abspath(__file__)
     ),
+
     "galert.db"
+
 )
 
 
@@ -680,6 +806,9 @@ def save_alert_to_db(record):
                     satellites,
                     location_name,
                     email_sent
+                     temperature,
+                     pressure,
+                     environment_altitude
 
                 )
 
@@ -973,18 +1102,14 @@ def calculate_vibration():
     )
 
 
-    # --------------------------------------------------------
     # Convert G to m/s²
-    # --------------------------------------------------------
 
     ax *= 9.81
+
     ay *= 9.81
+
     az *= 9.81
 
-
-    # --------------------------------------------------------
-    # Total acceleration
-    # --------------------------------------------------------
 
     total_acceleration = math.sqrt(
 
@@ -997,10 +1122,6 @@ def calculate_vibration():
     )
 
 
-    # --------------------------------------------------------
-    # First reading
-    # --------------------------------------------------------
-
     if previous_acceleration is None:
 
         previous_acceleration = (
@@ -1009,10 +1130,6 @@ def calculate_vibration():
 
         return 0.0
 
-
-    # --------------------------------------------------------
-    # Change in acceleration
-    # --------------------------------------------------------
 
     vibration = abs(
 
@@ -1028,9 +1145,7 @@ def calculate_vibration():
     )
 
 
-    # --------------------------------------------------------
-    # Deadband
-    # --------------------------------------------------------
+    # Small deadband
 
     if vibration < 0.03:
 
@@ -1038,6 +1153,133 @@ def calculate_vibration():
 
 
     return vibration
+
+
+# ============================================================
+# READ BMP280
+# ============================================================
+
+def read_bmp280():
+
+    """
+    Reads temperature, pressure and altitude
+    from the BMP280 sensor.
+    """
+
+    # --------------------------------------------------------
+    # MOCK MODE
+    # --------------------------------------------------------
+
+    if MOCK_HARDWARE:
+
+        return {
+
+            "temperature":
+                round(
+                    random.uniform(
+                        25.0,
+                        32.0
+                    ),
+                    2
+                ),
+
+            "pressure":
+                round(
+                    random.uniform(
+                        1005.0,
+                        1015.0
+                    ),
+                    2
+                ),
+
+            "environment_altitude":
+                round(
+                    random.uniform(
+                        20.0,
+                        60.0
+                    ),
+                    2
+                )
+        }
+
+
+    # --------------------------------------------------------
+    # Sensor unavailable
+    # --------------------------------------------------------
+
+    if bmp280 is None:
+
+        return {
+
+            "temperature": None,
+
+            "pressure": None,
+
+            "environment_altitude": None
+
+        }
+
+
+    # --------------------------------------------------------
+    # Read real sensor
+    # --------------------------------------------------------
+
+    try:
+
+        temperature = (
+            bmp280.temperature
+        )
+
+
+        pressure = (
+            bmp280.pressure
+        )
+
+
+        altitude = (
+            bmp280.altitude
+        )
+
+
+        return {
+
+            "temperature":
+                round(
+                    temperature,
+                    2
+                ),
+
+            "pressure":
+                round(
+                    pressure,
+                    2
+                ),
+
+            "environment_altitude":
+                round(
+                    altitude,
+                    2
+                )
+
+        }
+
+
+    except Exception as e:
+
+        print(
+            f"[BMP280 ERROR] {e}"
+        )
+
+
+        return {
+
+            "temperature": None,
+
+            "pressure": None,
+
+            "environment_altitude": None
+
+        }
 
 
 # ============================================================
@@ -1078,6 +1320,36 @@ def determine_activity_level(
 
 def read_gps():
 
+    # --------------------------------------------------------
+    # MOCK GPS
+    # --------------------------------------------------------
+
+    if MOCK_HARDWARE:
+
+        return {
+
+            "gps_fixed":
+                True,
+
+            "latitude":
+                6.6885,
+
+            "longitude":
+                -1.6244,
+
+            "altitude":
+                250.0,
+
+            "satellites":
+                8
+
+        }
+
+
+    # --------------------------------------------------------
+    # GPS unavailable
+    # --------------------------------------------------------
+
     if gps_serial is None:
 
         return None
@@ -1086,6 +1358,7 @@ def read_gps():
     try:
 
         line = (
+
             gps_serial
             .readline()
             .decode(
@@ -1093,6 +1366,7 @@ def read_gps():
                 errors="ignore"
             )
             .strip()
+
         )
 
 
@@ -1108,8 +1382,10 @@ def read_gps():
             )
         ):
 
-            msg = pynmea2.parse(
-                line
+            msg = (
+                pynmea2.parse(
+                    line
+                )
             )
 
 
@@ -1125,7 +1401,9 @@ def read_gps():
 
             altitude = (
 
-                float(msg.altitude)
+                float(
+                    msg.altitude
+                )
 
                 if msg.altitude
 
@@ -1136,7 +1414,9 @@ def read_gps():
 
             satellites = (
 
-                int(msg.num_sats)
+                int(
+                    msg.num_sats
+                )
 
                 if msg.num_sats
 
@@ -1147,9 +1427,12 @@ def read_gps():
 
             gps_fixed = (
 
-                msg.gps_qual is not None
+                msg.gps_qual
+                is not None
 
-                and int(
+                and
+
+                int(
                     msg.gps_qual
                 ) > 0
 
@@ -1201,6 +1484,7 @@ def send_email_alert(
     level,
     vibration,
     gps_info,
+    bmp_info,
     alert_time=None
 ):
 
@@ -1208,7 +1492,7 @@ def send_email_alert(
 
 
     # ========================================================
-    # CHECK EMAIL CONFIGURATION
+    # EMAIL CONFIGURATION
     # ========================================================
 
     if not EMAIL_SENDER:
@@ -1255,11 +1539,7 @@ def send_email_alert(
 
 
         # ====================================================
-        # GPS DEFAULT VALUES
-        #
-        # This is important.
-        #
-        # Even if GPS has no fix, these variables exist.
+        # GPS VALUES
         # ====================================================
 
         latitude = gps_info.get(
@@ -1286,18 +1566,74 @@ def send_email_alert(
 
 
         # ====================================================
+        # BMP280 VALUES
+        # ====================================================
+
+        temperature = bmp_info.get(
+            "temperature"
+        )
+
+        pressure = bmp_info.get(
+            "pressure"
+        )
+
+        environment_altitude = (
+            bmp_info.get(
+                "environment_altitude"
+            )
+        )
+
+
+        # ====================================================
+        # ENVIRONMENT TEXT
+        # ====================================================
+
+        temperature_text = (
+
+            f"{temperature:.2f} °C"
+
+            if temperature is not None
+
+            else "Unavailable"
+
+        )
+
+
+        pressure_text = (
+
+            f"{pressure:.2f} hPa"
+
+            if pressure is not None
+
+            else "Unavailable"
+
+        )
+
+
+        environment_altitude_text = (
+
+            f"{environment_altitude:.2f} m"
+
+            if environment_altitude is not None
+
+            else "Unavailable"
+
+        )
+
+
+        # ====================================================
         # GPS FIXED
         # ====================================================
 
         if (
-            gps_fixed
-            and latitude is not None
-            and longitude is not None
-        ):
 
-            # ------------------------------------------------
-            # Reverse geocoding
-            # ------------------------------------------------
+            gps_fixed
+
+            and latitude is not None
+
+            and longitude is not None
+
+        ):
 
             real_location = (
                 get_reverse_geocode(
@@ -1307,10 +1643,6 @@ def send_email_alert(
             )
 
 
-            # ------------------------------------------------
-            # Google Maps
-            # ------------------------------------------------
-
             google_maps_url = (
 
                 "https://www.google.com/maps?q="
@@ -1318,10 +1650,6 @@ def send_email_alert(
 
             )
 
-
-            # ------------------------------------------------
-            # GPS HTML
-            # ------------------------------------------------
 
             gps_section = f"""
 
@@ -1340,9 +1668,8 @@ def send_email_alert(
                     font-weight:700;
                     color:#1e40af;
                     text-transform:uppercase;
-                    letter-spacing:0.5px;
                 ">
-                    Real Geographic Location
+                    Geographic Location
                 </p>
 
                 <p style="
@@ -1350,7 +1677,6 @@ def send_email_alert(
                     font-size:18px;
                     font-weight:bold;
                     color:#0f172a;
-                    line-height:1.4;
                 ">
                     {real_location}
                 </p>
@@ -1362,22 +1688,20 @@ def send_email_alert(
                 width:100%;
                 font-size:13px;
                 color:#475569;
-                margin-bottom:16px;
                 border-collapse:collapse;
             ">
 
                 <tr>
 
-                    <td style="padding:4px 0;">
-                        Coordinates
+                    <td style="padding:5px 0;">
+                        Latitude
                     </td>
 
                     <td style="
                         font-weight:600;
                         color:#0f172a;
                     ">
-                        {latitude:.5f},
-                        {longitude:.5f}
+                        {latitude:.6f}
                     </td>
 
                 </tr>
@@ -1385,8 +1709,24 @@ def send_email_alert(
 
                 <tr>
 
-                    <td style="padding:4px 0;">
-                        Altitude
+                    <td style="padding:5px 0;">
+                        Longitude
+                    </td>
+
+                    <td style="
+                        font-weight:600;
+                        color:#0f172a;
+                    ">
+                        {longitude:.6f}
+                    </td>
+
+                </tr>
+
+
+                <tr>
+
+                    <td style="padding:5px 0;">
+                        GPS Altitude
                     </td>
 
                     <td style="
@@ -1405,15 +1745,15 @@ def send_email_alert(
 
                 <tr>
 
-                    <td style="padding:4px 0;">
-                        Satellites Connected
+                    <td style="padding:5px 0;">
+                        Satellites
                     </td>
 
                     <td style="
                         font-weight:600;
                         color:#0f172a;
                     ">
-                        {satellites} satellites
+                        {satellites}
                     </td>
 
                 </tr>
@@ -1421,7 +1761,7 @@ def send_email_alert(
             </table>
 
 
-            <p style="margin:16px 0 0 0;">
+            <p style="margin:18px 0 0 0;">
 
                 <a
                     href="{google_maps_url}"
@@ -1433,7 +1773,6 @@ def send_email_alert(
                         text-decoration:none;
                         border-radius:6px;
                         font-weight:bold;
-                        font-size:14px;
                     "
                 >
                     VIEW ON GOOGLE MAPS
@@ -1488,7 +1827,7 @@ def send_email_alert(
                 </p>
 
                 <p style="
-                    margin:4px 0 0 0;
+                    margin:5px 0 0 0;
                     font-size:13px;
                     color:#7f1d1d;
                 ">
@@ -1542,7 +1881,6 @@ GALERT Activity Alert
     background:white;
     border-radius:10px;
     overflow:hidden;
-    box-shadow:0 2px 8px rgba(0,0,0,0.1);
 ">
 
 
@@ -1601,20 +1939,20 @@ GALERT Activity Alert
         </div>
 
 
-        <!-- SENSOR -->
+        <!-- ACTIVITY -->
 
         <h3>
-            Sensor Information
+            Activity Information
         </h3>
 
 
         <p>
 
             <strong>
-                Vibration:
+                Ground Vibration:
             </strong>
 
-            {vibration:.2f} m/s²
+            {vibration:.3f} m/s²
 
         </p>
 
@@ -1628,6 +1966,84 @@ GALERT Activity Alert
             {alert_time}
 
         </p>
+
+
+        <hr>
+
+
+        <!-- BMP280 -->
+
+        <h3>
+            Environmental Information
+        </h3>
+
+
+        <table style="
+            width:100%;
+            border-collapse:collapse;
+            font-size:14px;
+        ">
+
+            <tr>
+
+                <td style="
+                    padding:8px;
+                    border-bottom:1px solid #eee;
+                ">
+                    Temperature
+                </td>
+
+                <td style="
+                    padding:8px;
+                    border-bottom:1px solid #eee;
+                    font-weight:bold;
+                ">
+                    {temperature_text}
+                </td>
+
+            </tr>
+
+
+            <tr>
+
+                <td style="
+                    padding:8px;
+                    border-bottom:1px solid #eee;
+                ">
+                    Atmospheric Pressure
+                </td>
+
+                <td style="
+                    padding:8px;
+                    border-bottom:1px solid #eee;
+                    font-weight:bold;
+                ">
+                    {pressure_text}
+                </td>
+
+            </tr>
+
+
+            <tr>
+
+                <td style="
+                    padding:8px;
+                    border-bottom:1px solid #eee;
+                ">
+                    Environmental Altitude
+                </td>
+
+                <td style="
+                    padding:8px;
+                    border-bottom:1px solid #eee;
+                    font-weight:bold;
+                ">
+                    {environment_altitude_text}
+                </td>
+
+            </tr>
+
+        </table>
 
 
         <hr>
@@ -1655,7 +2071,6 @@ GALERT Activity Alert
             margin-top:20px;
         ">
 
-
             <strong>
                 Important:
             </strong>
@@ -1671,7 +2086,6 @@ GALERT Activity Alert
                 Human investigation is required.
 
             </p>
-
 
         </div>
 
@@ -1709,9 +2123,13 @@ GALERT Activity Alert
         # ====================================================
 
         gps_status = (
+
             "FIXED"
+
             if gps_fixed
+
             else "SEARCHING"
+
         )
 
 
@@ -1732,17 +2150,15 @@ GALERT Activity Alert
             )
 
 
-        if altitude is not None:
+        altitude_text = (
 
-            altitude_text = (
-                f"{altitude} m"
-            )
+            f"{altitude} m"
 
-        else:
+            if altitude is not None
 
-            altitude_text = (
-                "Unavailable"
-            )
+            else "Unavailable"
+
+        )
 
 
         plain_text = f"""
@@ -1750,21 +2166,27 @@ GALERT Activity Alert
 GALERT {level} ACTIVITY ALERT
 ========================================
 
-LOCATION:
-{real_location}
-
-
-SENSOR INFORMATION:
+ACTIVITY:
 - Activity Level: {level}
-- Ground Vibration: {vibration:.2f} m/s²
+- Ground Vibration: {vibration:.3f} m/s²
 - Alert Time: {alert_time}
+
+
+ENVIRONMENTAL DATA — BMP280:
+- Temperature: {temperature_text}
+- Atmospheric Pressure: {pressure_text}
+- Environmental Altitude: {environment_altitude_text}
 
 
 GPS TELEMETRY:
 - GPS Status: {gps_status}
 - Coordinates: {coordinates}
-- Altitude: {altitude_text}
+- GPS Altitude: {altitude_text}
 - Satellites: {satellites}
+
+
+LOCATION:
+{real_location}
 
 
 GOOGLE MAPS:
@@ -1774,10 +2196,10 @@ GOOGLE MAPS:
 IMPORTANT:
 
 This alert was automatically triggered by
-ground vibration sensors.
+the GALERT sensor system.
 
-This does not by itself confirm galamsey
-activity.
+The detected activity does not by itself
+confirm galamsey activity.
 
 Human field investigation is recommended.
 
@@ -1794,16 +2216,18 @@ Human field investigation is recommended.
         )
 
 
-        message["From"] = EMAIL_SENDER
+        message["From"] = (
+            EMAIL_SENDER
+        )
 
-        message["To"] = EMAIL_RECEIVER
+        message["To"] = (
+            EMAIL_RECEIVER
+        )
 
-        message["Subject"] = subject
+        message["Subject"] = (
+            subject
+        )
 
-
-        # ====================================================
-        # ATTACH PLAIN TEXT
-        # ====================================================
 
         message.attach(
 
@@ -1814,10 +2238,6 @@ Human field investigation is recommended.
 
         )
 
-
-        # ====================================================
-        # ATTACH HTML
-        # ====================================================
 
         message.attach(
 
@@ -1843,7 +2263,6 @@ Human field investigation is recommended.
             587,
             timeout=20
         ) as server:
-
 
             print(
                 "[EMAIL] Starting TLS..."
@@ -1874,158 +2293,58 @@ Human field investigation is recommended.
             )
 
 
-        # ====================================================
-        # EMAIL SUCCESS
-        # ====================================================
-
-        print("")
         print(
-            "==================================="
+            "[EMAIL] Alert sent successfully."
         )
-        print(
-            "       EMAIL ALERT SENT"
-        )
-        print(
-            "==================================="
-        )
-        print(
-            f"Level: {level}"
-        )
-        print(
-            f"Receiver: {EMAIL_RECEIVER}"
-        )
-        print(
-            "==================================="
-        )
-        print("")
 
 
-        # Update cooldown only after successful email
+        # Only update cooldown after successful email
+
         last_alert_time = time.time()
 
 
         return True
 
 
-    # ========================================================
-    # GMAIL AUTHENTICATION ERROR
-    # ========================================================
-
     except smtplib.SMTPAuthenticationError as e:
 
-        print("")
         print(
-            "==================================="
+            "[EMAIL ERROR] "
+            "Gmail authentication failed."
         )
-        print(
-            "     GMAIL AUTHENTICATION ERROR"
-        )
-        print(
-            "==================================="
-        )
+
         print(e)
-        print("")
-        print(
-            "Check the following:"
-        )
-        print(
-            "1. Gmail address"
-        )
-        print(
-            "2. Google App Password"
-        )
-        print(
-            "3. 2-Step Verification"
-        )
-        print(
-            "4. .env file"
-        )
-        print(
-            "==================================="
-        )
-        print("")
 
         return False
 
-
-    # ========================================================
-    # CONNECTION ERROR
-    # ========================================================
 
     except smtplib.SMTPConnectError as e:
 
-        print("")
         print(
-            "==================================="
+            "[EMAIL ERROR] "
+            "Could not connect to Gmail SMTP."
         )
-        print(
-            "       GMAIL CONNECTION ERROR"
-        )
-        print(
-            "==================================="
-        )
+
         print(e)
-        print(
-            "==================================="
-        )
-        print("")
 
         return False
 
-
-    # ========================================================
-    # SMTP ERROR
-    # ========================================================
 
     except smtplib.SMTPException as e:
 
-        print("")
         print(
-            "==================================="
+            f"[EMAIL SMTP ERROR] {e}"
         )
-        print(
-            "          SMTP ERROR"
-        )
-        print(
-            "==================================="
-        )
-        print(e)
-        print(
-            "==================================="
-        )
-        print("")
 
         return False
 
 
-    # ========================================================
-    # OTHER ERROR
-    # ========================================================
-
     except Exception as e:
 
-        print("")
         print(
-            "==================================="
+            f"[EMAIL ERROR] "
+            f"{type(e).__name__}: {e}"
         )
-        print(
-            "       EMAIL ALERT ERROR"
-        )
-        print(
-            "==================================="
-        )
-        print(
-            "Error Type:",
-            type(e).__name__
-        )
-        print(
-            "Error:",
-            e
-        )
-        print(
-            "==================================="
-        )
-        print("")
 
         return False
 
@@ -2049,18 +2368,18 @@ def record_alert(
 
 
     # --------------------------------------------------------
-    # Do NOT update cooldown here.
-    #
-    # send_email_alert() updates it only after successful
-    # email transmission.
+    # Get current BMP280 values
+    # --------------------------------------------------------
+
+    bmp_info = read_bmp280()
+
+
+    # --------------------------------------------------------
+    # Email
     # --------------------------------------------------------
 
     email_sent = False
 
-
-    # --------------------------------------------------------
-    # Attempt email
-    # --------------------------------------------------------
 
     if (
         EMAIL_SENDER
@@ -2085,6 +2404,8 @@ def record_alert(
                     vibration,
 
                     gps_info,
+
+                    bmp_info,
 
                     alert_time
 
@@ -2124,9 +2445,15 @@ def record_alert(
 
 
     if (
-        gps_info.get("gps_fixed")
+
+        gps_info.get(
+            "gps_fixed"
+        )
+
         and latitude is not None
+
         and longitude is not None
+
     ):
 
         location_name = (
@@ -2202,7 +2529,7 @@ def record_alert(
 
 
     # --------------------------------------------------------
-    # Save to SQLite
+    # Save alert
     # --------------------------------------------------------
 
     save_alert_to_db(
@@ -2242,11 +2569,6 @@ def record_alert(
         ] = alert_time
 
 
-        sensor_data[
-            "location_name"
-        ] = location_name
-
-
     print(
         f"[ALERT RECORDED IN DB] "
         f"{level} at {location_name} | "
@@ -2259,7 +2581,7 @@ def record_alert(
 
 
 # ============================================================
-# CHECK WHETHER ALERT SHOULD BE SENT
+# CHECK ALERT
 # ============================================================
 
 def check_alert(
@@ -2305,7 +2627,6 @@ def check_alert(
             critical_start_time = (
                 current_time
             )
-
 
             print(
                 "CRITICAL activity detected. "
@@ -2366,7 +2687,6 @@ def check_alert(
             high_start_time = (
                 current_time
             )
-
 
             print(
                 "HIGH activity detected. "
@@ -2438,6 +2758,10 @@ def sensor_loop():
     )
 
     print(
+        "BMP280: READY"
+    )
+
+    print(
         "NEO-6M GPS: READY"
     )
 
@@ -2477,10 +2801,21 @@ def sensor_loop():
 
 
             # =================================================
+            # READ BMP280
+            # =================================================
+
+            bmp_info = (
+                read_bmp280()
+            )
+
+
+            # =================================================
             # READ GPS
             # =================================================
 
-            gps_result = read_gps()
+            gps_result = (
+                read_gps()
+            )
 
 
             # =================================================
@@ -2489,9 +2824,16 @@ def sensor_loop():
 
             with data_lock:
 
+                # ------------------------------------------------
+                # MPU-6050
+                # ------------------------------------------------
+
                 sensor_data[
                     "vibration"
-                ] = vibration
+                ] = round(
+                    vibration,
+                    3
+                )
 
 
                 sensor_data[
@@ -2505,7 +2847,32 @@ def sensor_loop():
 
 
                 # ------------------------------------------------
-                # Update GPS only when a new GPS sentence is read
+                # BMP280
+                # ------------------------------------------------
+
+                sensor_data[
+                    "temperature"
+                ] = bmp_info[
+                    "temperature"
+                ]
+
+
+                sensor_data[
+                    "pressure"
+                ] = bmp_info[
+                    "pressure"
+                ]
+
+
+                sensor_data[
+                    "environment_altitude"
+                ] = bmp_info[
+                    "environment_altitude"
+                ]
+
+
+                # ------------------------------------------------
+                # GPS
                 # ------------------------------------------------
 
                 if gps_result is not None:
@@ -2547,15 +2914,21 @@ def sensor_loop():
 
                     if (
 
-                        gps_result["gps_fixed"]
+                        gps_result[
+                            "gps_fixed"
+                        ]
 
                         and
-                        gps_result["latitude"]
-                        is not None
+
+                        gps_result[
+                            "latitude"
+                        ] is not None
 
                         and
-                        gps_result["longitude"]
-                        is not None
+
+                        gps_result[
+                            "longitude"
+                        ] is not None
 
                     ):
 
@@ -2577,7 +2950,7 @@ def sensor_loop():
 
 
                 # =================================================
-                # CREATE GPS SNAPSHOT
+                # GPS SNAPSHOT FOR ALERT
                 # =================================================
 
                 gps_info = {
@@ -2608,13 +2981,9 @@ def sensor_loop():
                         ],
 
                     "location_name":
-                        sensor_data.get(
-
-                            "location_name",
-
-                            "Unknown Location"
-
-                        )
+                        sensor_data[
+                            "location_name"
+                        ]
 
                 }
 
@@ -2645,6 +3014,12 @@ def sensor_loop():
 
                 f"Activity: "
                 f"{level} | "
+
+                f"Temperature: "
+                f"{bmp_info['temperature']} °C | "
+
+                f"Pressure: "
+                f"{bmp_info['pressure']} hPa | "
 
                 f"GPS: "
                 f"{gps_info['gps_fixed']} | "
@@ -2888,4 +3263,4 @@ if __name__ == "__main__":
 
         debug=False
 
-     )
+    )
