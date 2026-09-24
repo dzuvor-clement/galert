@@ -4,53 +4,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="GALERT – Real-time galamsey activity monitoring dashboard">
 
-    <title>Galamsey Activity Monitor</title>
+    <title>GALERT – Galamsey Activity Monitor</title>
 
     <!-- Leaflet Map -->
-    <link
-        rel="stylesheet"
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    >
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
     <!-- Our CSS -->
-    <link
-        rel="stylesheet"
-        href="{{ url_for('static', filename='style.css') }}"
-    >
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 
 <body>
 
+    <!-- SIDEBAR OVERLAY (Mobile) -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <!-- SIDEBAR -->
 
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
 
-        <h2>GALERT</h2>
+        <div class="sidebar-header-row">
+            <div>
+                <h2>GALERT</h2>
+                <p class="subtitle">Galamsey Activity Monitor</p>
+            </div>
+            <button class="sidebar-close-btn" id="sidebarCloseBtn" title="Close Sidebar" aria-label="Close Sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+            </button>
+        </div>
 
-        <p class="subtitle">
-            Galamsey Activity Monitor
-        </p>
+        <!-- DEVICE SELECTOR (PLATFORM WIDE) -->
+
+        <div class="platform-section">
+
+            <p class="section-label">PLATFORM-WIDE</p>
+
+            <button class="device-current-btn" id="deviceToggleBtn" title="Switch active device platform-wide">
+                <span class="dev-status-dot" id="currentDevDot"></span>
+                <div class="current-dev-text">
+                    <span id="currentDevName">GALERT-01</span>
+                    <span class="current-dev-loc" id="currentDevLoc">Kumasi Central</span>
+                </div>
+                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"/>
+                </svg>
+            </button>
+
+            <div class="device-list" id="deviceList" style="display:none"></div>
+
+        </div>
+
+        <hr class="sidebar-divider">
 
         <nav>
 
-            <a href="#" class="active">
+            <a href="#" class="active" data-tab="dashboard">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="7" height="9" x="3" y="3" rx="1"/>
+                    <rect width="7" height="5" x="14" y="3" rx="1"/>
+                    <rect width="7" height="9" x="14" y="12" rx="1"/>
+                    <rect width="7" height="5" x="3" y="16" rx="1"/>
+                </svg>
                 Dashboard
             </a>
 
-            <a href="#">
+            <a href="#" data-tab="sensors">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="16" height="16" x="4" y="4" rx="2"/>
+                    <rect width="6" height="6" x="9" y="9" rx="1"/>
+                    <path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/>
+                </svg>
                 Sensors
             </a>
 
-            <a href="#">
+            <a href="#" data-tab="activity">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
                 Activity
             </a>
 
-            <a href="#">
+            <a href="#" data-tab="map">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+                    <line x1="9" x2="9" y1="3" y2="18"/>
+                    <line x1="15" x2="15" y1="6" y2="21"/>
+                </svg>
                 Map
             </a>
 
-            <a href="#">
+            <a href="#" data-tab="alerts">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                </svg>
                 Alerts
             </a>
 
@@ -63,189 +115,597 @@
 
     <main class="main">
 
-        <!-- HEADER -->
+        <!-- HEADER (always visible) -->
 
         <header>
 
-            <div>
-                <h1>Monitoring Dashboard</h1>
-
-                <p>
-                    Real-time IoT activity monitoring
-                </p>
+            <div class="header-left">
+                <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Toggle Sidebar" aria-label="Toggle Sidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="4" x2="20" y1="12" y2="12"/>
+                        <line x1="4" x2="20" y1="6" y2="6"/>
+                        <line x1="4" x2="20" y1="18" y2="18"/>
+                    </svg>
+                </button>
+                <div>
+                    <h1 id="pageTitle">Monitoring Dashboard</h1>
+                    <p id="pageSubtitle">Real-time IoT activity monitoring</p>
+                </div>
             </div>
 
-            <div class="system-status">
-
-                <span class="status-dot"></span>
-
-                System Online
-
+            <div class="header-right">
+                <div class="active-device-pill" id="headerDevicePill" title="Device currently prioritized">
+                    <span class="pill-dot" id="headerPillDot"></span>
+                    <span id="headerPillText">GALERT-01 · Kumasi Central</span>
+                    <button class="pill-edit-btn" id="headerRenameBtn" title="Change location name" aria-label="Edit location">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                            <path d="m15 5 4 4"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="system-status">
+                    <span class="status-dot"></span>
+                    System Online
+                </div>
             </div>
 
         </header>
 
 
-        <!-- SUMMARY CARDS -->
+        <!-- ============================================== -->
+        <!-- PAGE: DASHBOARD                                -->
+        <!-- ============================================== -->
 
-        <section class="cards">
+        <div data-page="dashboard">
 
-            <div class="card">
+            <!-- SUMMARY CARDS -->
 
-                <h3>Activity Status</h3>
+            <section class="cards">
 
-                <div
-                    id="activityStatus"
-                    class="normal"
-                >
-                    NORMAL
+                <div class="card">
+                    <h3>Activity Status</h3>
+                    <div id="activityStatus" class="badge-normal">NORMAL</div>
                 </div>
 
-            </div>
+                <div class="card">
+                    <h3>Ground Vibration</h3>
+                    <div class="value">
+                        <span id="vibration">0.00</span> m/s²
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>GPS Status</h3>
+                    <div id="gpsStatus" class="value-sm">Waiting...</div>
+                </div>
+
+                <div class="card">
+                    <h3>Satellites</h3>
+                    <div class="value" id="satellites">0</div>
+                </div>
+
+            </section>
 
 
-            <div class="card">
+            <!-- MAIN GRID -->
 
-                <h3>Vibration</h3>
+            <section class="dashboard-grid">
 
-                <div class="value">
+                <!-- ACTIVITY PANEL -->
 
-                    <span id="vibration">
-                        0.00
-                    </span>
+                <div class="panel">
 
-                    m/s²
+                    <h2>Activity Information</h2>
+
+                    <div class="activity-box" id="activityBox">
+
+                        <p class="activity-label">Current Status</p>
+
+                        <h2 id="activityMessage">
+                            No suspicious activity detected
+                        </h2>
+
+                        <p>
+                            Ground Vibration Level:
+                            <strong id="vibration2">0.00</strong> m/s²
+                        </p>
+
+                    </div>
 
                 </div>
 
-            </div>
 
+                <!-- GPS PANEL -->
 
-            <div class="card">
+                <div class="panel">
 
-                <h3>GPS Status</h3>
+                    <h2>GPS Location</h2>
 
-                <div id="gpsStatus">
-                    Waiting...
+                    <div class="coordinates">
+
+                        <div class="coord-row">
+                            <span class="coord-label">Real Location</span>
+                            <strong id="realLocationName" style="color:#2dd4bf; font-size:13px; text-align:right; max-width:65%; word-break:break-word;">Resolving...</strong>
+                        </div>
+
+                        <div class="coord-row">
+                            <span class="coord-label">Latitude</span>
+                            <strong id="latitude">--</strong>
+                        </div>
+
+                        <div class="coord-row">
+                            <span class="coord-label">Longitude</span>
+                            <strong id="longitude">--</strong>
+                        </div>
+
+                        <div class="coord-row">
+                            <span class="coord-label">Altitude</span>
+                            <strong id="altitude">--</strong> m
+                        </div>
+
+                        <div class="coord-row">
+                            <span class="coord-label">Satellites</span>
+                            <strong id="sats2">0</strong>
+                        </div>
+
+                    </div>
+
+                    <a href="#" data-tab="map" class="view-map-btn">
+                        View Full Map →
+                    </a>
+
                 </div>
 
-            </div>
+            </section>
 
 
-            <div class="card">
+            <!-- MINI MAP -->
 
-                <h3>Satellites</h3>
+            <section class="panel map-panel">
 
-                <div
-                    class="value"
-                    id="satellites"
-                >
-                    0
+                <h2>Activity Location</h2>
+
+                <div id="map"></div>
+
+            </section>
+
+        </div>
+        <!-- /data-page=dashboard -->
+
+
+        <!-- ============================================== -->
+        <!-- PAGE: SENSORS                                  -->
+        <!-- ============================================== -->
+
+        <div data-page="sensors" style="display:none">
+
+            <section class="cards">
+
+                <div class="card">
+                    <h3>MPU-6050</h3>
+                    <div id="mpu-status" class="badge-normal">CONNECTED</div>
                 </div>
 
-            </div>
+                <div class="card">
+                    <h3>NEO-6M GPS</h3>
+                    <div id="gps-chip-status" class="badge-normal">CONNECTED</div>
+                </div>
 
-        </section>
+                <div class="card">
+                    <h3>Activity Level</h3>
+                    <div class="value" id="s-activity-level">NORMAL</div>
+                </div>
+
+                <div class="card">
+                    <h3>Email Alerts</h3>
+                    <div class="badge-normal">ENABLED</div>
+                </div>
+
+            </section>
 
 
-        <!-- MAIN GRID -->
+            <section class="dashboard-grid">
 
-        <section class="dashboard-grid">
+                <!-- MPU-6050 CARD -->
+
+                <div class="panel">
+
+                    <div class="sensor-header">
+                        <div>
+                            <h2>MPU-6050 Accelerometer</h2>
+                            <p class="sensor-sub">6-axis motion tracking</p>
+                        </div>
+                        <span class="chip-badge">I²C · 0x68</span>
+                    </div>
+
+                    <div class="sensor-rows">
+
+                        <div class="sensor-row">
+                            <span>Vibration</span>
+                            <span id="s-vibration">-- m/s²</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Activity Detected</span>
+                            <span id="s-detected">--</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>HIGH Threshold</span>
+                            <span>0.15 m/s²</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>CRITICAL Threshold</span>
+                            <span>0.50 m/s²</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Sensitivity</span>
+                            <span>±2g (16384 LSB/g)</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Interface</span>
+                            <span>I²C (smbus)</span>
+                        </div>
+
+                    </div>
+
+                </div>
 
 
-            <!-- ACTIVITY PANEL -->
+                <!-- NEO-6M GPS CARD -->
+
+                <div class="panel">
+
+                    <div class="sensor-header">
+                        <div>
+                            <h2>NEO-6M GPS Module</h2>
+                            <p class="sensor-sub">Global positioning system</p>
+                        </div>
+                        <span class="chip-badge">UART · 9600</span>
+                    </div>
+
+                    <div class="sensor-rows">
+
+                        <div class="sensor-row">
+                            <span>Real Location</span>
+                            <span id="s-realLocationName" style="color:#2dd4bf; font-size:13px; text-align:right; max-width:60%; word-break:break-word;">Resolving...</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Fix Acquired</span>
+                            <span id="s-gps-fixed">--</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Latitude</span>
+                            <span id="s-lat">--</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Longitude</span>
+                            <span id="s-lon">--</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Altitude</span>
+                            <span id="s-alt">-- m</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Satellites</span>
+                            <span id="s-sats">--</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Protocol</span>
+                            <span>NMEA 0183 (GPGGA)</span>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </div>
+        <!-- /data-page=sensors -->
+
+
+        <!-- ============================================== -->
+        <!-- PAGE: ACTIVITY                                 -->
+        <!-- ============================================== -->
+
+        <div data-page="activity" style="display:none">
+
+            <section class="cards">
+
+                <div class="card">
+                    <h3>Current Level</h3>
+                    <div class="value" id="act-level">NORMAL</div>
+                </div>
+
+                <div class="card">
+                    <h3>Ground Vibration</h3>
+                    <div class="value"><span id="act-vibration">0.00</span> m/s²</div>
+                </div>
+
+                <div class="card">
+                    <h3>HIGH Threshold</h3>
+                    <div class="value threshold-high">0.15 m/s²</div>
+                </div>
+
+                <div class="card">
+                    <h3>CRITICAL Threshold</h3>
+                    <div class="value threshold-critical">0.50 m/s²</div>
+                </div>
+
+            </section>
+
+
+            <!-- VIBRATION GAUGE + HISTORY -->
+
+            <section class="dashboard-grid">
+
+                <!-- LIVE GAUGE -->
+
+                <div class="panel">
+
+                    <h2>Live Vibration Meter</h2>
+
+                    <div class="gauge-wrap">
+
+                        <div class="gauge-bar-bg">
+                            <div class="gauge-bar-fill" id="gaugeFill"></div>
+                            <div class="gauge-threshold" id="gaugeHigh"
+                                style="left: 30%"
+                                title="HIGH threshold (0.15 m/s²)">
+                            </div>
+                            <div class="gauge-threshold gauge-threshold-critical"
+                                id="gaugeCritical"
+                                style="left: 100%"
+                                title="CRITICAL threshold (0.50 m/s²)">
+                            </div>
+                        </div>
+
+                        <div class="gauge-labels">
+                            <span>0</span>
+                            <span class="label-high">HIGH</span>
+                            <span class="label-crit">CRITICAL</span>
+                            <span>0.50+</span>
+                        </div>
+
+                    </div>
+
+                    <div class="gauge-value-display">
+                        <span id="gaugeValue">0.000</span> m/s²
+                    </div>
+
+                    <div class="activity-level-display" id="actLevelDisplay">
+                        NORMAL
+                    </div>
+
+                </div>
+
+
+                <!-- THRESHOLDS REFERENCE -->
+
+                <div class="panel">
+
+                    <h2>Alert Thresholds</h2>
+
+                    <div class="threshold-list">
+
+                        <div class="threshold-item threshold-item-normal">
+                            <div class="threshold-dot dot-normal"></div>
+                            <div>
+                                <strong>NORMAL</strong>
+                                <p>Vibration below 0.15 m/s²</p>
+                                <p>No action taken</p>
+                            </div>
+                        </div>
+
+                        <div class="threshold-item threshold-item-high">
+                            <div class="threshold-dot dot-high"></div>
+                            <div>
+                                <strong>HIGH</strong>
+                                <p>Vibration ≥ 0.15 m/s²</p>
+                                <p>Email alert after 10 seconds sustained</p>
+                            </div>
+                        </div>
+
+                        <div class="threshold-item threshold-item-critical">
+                            <div class="threshold-dot dot-critical"></div>
+                            <div>
+                                <strong>CRITICAL</strong>
+                                <p>Vibration ≥ 0.50 m/s²</p>
+                                <p>Email alert after 2 seconds sustained</p>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- VIBRATION HISTORY CHART -->
 
             <div class="panel">
 
-                <h2>Activity Information</h2>
+                <h2>Vibration History <span class="chart-note">(last 40 readings)</span></h2>
 
-                <div class="activity-box">
+                <div class="history-chart" id="historyChart"></div>
 
-                    <p>
-                        Current Status
-                    </p>
-
-                    <h2 id="activityMessage">
-                        No suspicious activity detected
-                    </h2>
-
-                    <p>
-                        Vibration Level:
-                        <strong id="vibration2">
-                            0.00
-                        </strong>
-                        m/s²
-                    </p>
-
+                <div class="history-legend">
+                    <span class="legend-dot dot-normal"></span> Normal
+                    <span class="legend-dot dot-high" style="margin-left:16px"></span> High
+                    <span class="legend-dot dot-critical" style="margin-left:16px"></span> Critical
                 </div>
 
             </div>
 
+        </div>
+        <!-- /data-page=activity -->
 
-            <!-- GPS PANEL -->
+
+        <!-- ============================================== -->
+        <!-- PAGE: MAP                                      -->
+        <!-- ============================================== -->
+
+        <div data-page="map" style="display:none">
+
+            <section class="dashboard-grid" style="margin-bottom:20px">
+
+                <div class="panel">
+                    <h2>Device Coordinates</h2>
+                    <div class="coordinates">
+                        <div class="coord-row">
+                            <span class="coord-label">Real Location</span>
+                            <strong id="m-realLocationName" style="color:#2dd4bf; font-size:13px; text-align:right; max-width:65%; word-break:break-word;">Resolving...</strong>
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-label">Latitude</span>
+                            <strong id="m-lat">--</strong>
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-label">Longitude</span>
+                            <strong id="m-lon">--</strong>
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-label">Altitude</span>
+                            <strong id="m-alt">--</strong> m
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-label">Satellites</span>
+                            <strong id="m-sats">--</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>GPS Signal</h2>
+                    <div class="coordinates">
+                        <div class="coord-row">
+                            <span class="coord-label">Fix Status</span>
+                            <strong id="m-fix">Waiting...</strong>
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-label">Activity Level</span>
+                            <strong id="m-activity">NORMAL</strong>
+                        </div>
+                    </div>
+                    <a id="mapGoogleLink" href="#" target="_blank" class="view-map-btn" style="display:none">
+                        <i data-lucide="external-link" class="btn-icon"></i> Open in Google Maps
+                    </a>
+                </div>
+
+            </section>
+
+            <!-- FULL-SIZE MAP -->
+
+            <div class="panel" style="padding:0;overflow:hidden">
+                <div id="mapFull"></div>
+            </div>
+
+        </div>
+        <!-- /data-page=map -->
+
+
+        <!-- ============================================== -->
+        <!-- PAGE: ALERTS                                   -->
+        <!-- ============================================== -->
+
+        <div data-page="alerts" style="display:none">
 
             <div class="panel">
 
-                <h2>GPS Location</h2>
+                <div class="alerts-header">
+                    <h2>Alert History</h2>
+                    <span class="alert-count" id="alertCount">0 alerts</span>
+                </div>
 
-                <div class="coordinates">
+                <!-- Empty state -->
 
-                    <p>
-                        Latitude:
-                        <strong id="latitude">
-                            --
-                        </strong>
-                    </p>
+                <div id="alertsEmpty" class="alerts-empty">
+                    <i data-lucide="shield-check" class="empty-icon"></i>
+                    <p>No alerts have been triggered yet.</p>
+                    <p>Alerts appear here when HIGH or CRITICAL activity persists long enough to send an email.</p>
+                </div>
 
-                    <p>
-                        Longitude:
-                        <strong id="longitude">
-                            --
-                        </strong>
-                    </p>
+                <!-- Table -->
 
-                    <p>
-                        Altitude:
-                        <strong id="altitude">
-                            --
-                        </strong>
-                        m
-                    </p>
+                <div id="alertsTableWrap" class="table-wrap" style="display:none">
+
+                    <table id="alertsTable">
+
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Level</th>
+                                <th>Vibration</th>
+                                <th>GPS</th>
+                                <th>Satellites</th>
+                                <th>Email</th>
+                                <th>Location</th>
+                            </tr>
+                        </thead>
+
+                        <tbody id="alertsBody">
+                        </tbody>
+
+                    </table>
 
                 </div>
 
             </div>
 
+        </div>
+        <!-- /data-page=alerts -->
 
-        </section>
 
+        <!-- RENAME LOCATION MODAL -->
+        <div class="modal-backdrop" id="renameModal" style="display:none">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Edit Device Location</h3>
+                        <p class="modal-sub" id="renameModalDevId">GALERT-01</p>
+                    </div>
+                    <button class="modal-close-btn" id="closeRenameModalBtn" title="Close" aria-label="Close modal">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <label class="modal-label" for="newLocationInput">Location Name / Site Description</label>
+                    <input type="text" id="newLocationInput" class="modal-input" placeholder="e.g. Site A — Kumasi Central" maxlength="45" autocomplete="off">
+                    <p class="modal-hint">This name will be updated across the dashboard, sidebar, and map markers.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-cancel" id="cancelRenameBtn">Cancel</button>
+                    <button class="btn-save" id="saveRenameBtn">Save Location</button>
+                </div>
+            </div>
+        </div>
 
-        <!-- MAP -->
-
-        <section class="panel map-panel">
-
-            <h2>Activity Location</h2>
-
-            <div id="map"></div>
-
-        </section>
-
+        <!-- TOAST NOTIFICATION -->
+        <div class="toast" id="toastMessage" style="display:none"></div>
 
     </main>
 
 
     <!-- Leaflet JavaScript -->
-
-    <script
-        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
-    </script>
-
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <!-- Our JavaScript -->
-
-    <script
-        src="{{ url_for('static', filename='script.js') }}">
-    </script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
 
 </body>
 

@@ -1,12 +1,77 @@
-from flask import Flask, render_template, jsonify
-import smbus
-import serial
-import pynmea2
+from flask import Flask, render_template, jsonify, request
 import math
 import time
 import threading
 import smtplib
 import os
+import random
+import sqlite3
+import urllib.request
+import json
+
+# ============================================================
+# LINUX / HARDWARE AUTO-DETECTION
+# On Linux (Raspberry Pi), real hardware is used by default (MOCK_HARDWARE=false)
+# On Windows, mock sensors are used unless MOCK_HARDWARE=false is in .env
+# ============================================================
+
+IS_LINUX = os.name != "nt"
+MOCK_HARDWARE = os.getenv("MOCK_HARDWARE", "false" if IS_LINUX else "true").lower() in ("true", "1", "yes")
+
+if MOCK_HARDWARE:
+    # --- Fake smbus ---
+    _AXIS_BASE = [0, 0, 16384]          # [X, Y, Z] in LSB (1g static gravity on Z)
+
+    class _FakeSMBus:
+        def __init__(self, bus): pass
+        def write_byte_data(self, *a): pass
+        def read_byte_data(self, addr, reg):
+            offset = (reg - 0x3B)
+            if 0 <= offset < 6:
+                axis  = offset // 2
+                is_hi = (offset % 2) == 0
+                val   = _AXIS_BASE[axis]
+                return (val >> 8) if is_hi else (val & 0xFF)
+            return 0
+
+    class smbus:
+        SMBus = _FakeSMBus
+
+    # --- Fake serial ---
+    class _FakeSerial:
+        def __init__(self, *a, **kw): pass
+        def readline(self):
+            lat  = 6.6885
+            lon  = -1.6244
+            alt  = 250.0
+            lat_d = int(lat)
+            lat_m = (lat - lat_d) * 60
+            lon_d = int(abs(lon))
+            lon_m = (abs(lon) - lon_d) * 60
+            sentence = (
+                f"$GPGGA,120000.00,"
+                f"{lat_d:02d}{lat_m:07.4f},N,"
+                f"{lon_d:03d}{lon_m:07.4f},W,"
+                f"1,08,0.9,{alt:.1f},M,0.0,M,,"
+            )
+            chk = 0
+            for ch in sentence[1:]:
+                chk ^= ord(ch)
+            return (sentence + f"*{chk:02X}\r\n").encode("ascii")
+    class serial:
+        class Serial(_FakeSerial): pass
+
+    import pynmea2
+else:
+    try:
+        import smbus2 as smbus
+    except ImportError:
+        try:
+            import smbus
+        except ImportError:
+            smbus = None
+    import serial
+    import pynmea2
 
 from dotenv import load_dotenv
 
@@ -30,39 +95,54 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 # ============================================================
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 
 
 # ============================================================
-# MPU-6050 CONFIGURATION
+# HARDWARE CONFIGURATION & INITIALIZATION
 # ============================================================
 
 MPU6050_ADDRESS = 0x68
-
 PWR_MGMT_1 = 0x6B
 ACCEL_XOUT_H = 0x3B
 
-bus = smbus.SMBus(1)
+GPS_PORT = os.getenv("GPS_PORT", "/dev/serial0")
+GPS_BAUDRATE = int(os.getenv("GPS_BAUDRATE", "9600"))
 
-# Wake up MPU-6050
-bus.write_byte_data(
-    MPU6050_ADDRESS,
-    PWR_MGMT_1,
-    0
-)
+bus = None
+gps_serial = None
 
+def init_hardware():
+    global bus, gps_serial
+    if MOCK_HARDWARE:
+        bus = smbus.SMBus(1)
+        gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=1)
+        print("[HARDWARE] Running in MOCK mode (simulated sensors)")
+        return
 
-# ============================================================
-# GPS CONFIGURATION
-# ============================================================
+    # Real I2C MPU-6050
+    if smbus is not None:
+        try:
+            bus = smbus.SMBus(1)
+            bus.write_byte_data(MPU6050_ADDRESS, PWR_MGMT_1, 0)
+            print("[HARDWARE] MPU-6050 initialized successfully on I2C bus 1 (0x68)")
+        except Exception as e:
+            print(f"[HARDWARE WARNING] Could not initialize MPU-6050: {e}")
+            bus = None
+    else:
+        print("[HARDWARE WARNING] smbus / smbus2 module not installed")
+        bus = None
 
-GPS_PORT = "/dev/serial0"
-GPS_BAUDRATE = 9600
+    # Real NEO-6M GPS Serial
+    try:
+        gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=1)
+        print(f"[HARDWARE] GPS serial connected on {GPS_PORT} @ {GPS_BAUDRATE} baud")
+    except Exception as e:
+        print(f"[HARDWARE WARNING] Could not open GPS serial port {GPS_PORT}: {e}")
+        gps_serial = None
 
-gps_serial = serial.Serial(
-    GPS_PORT,
-    GPS_BAUDRATE,
-    timeout=1
-)
+init_hardware()
 
 
 # ============================================================
@@ -93,32 +173,186 @@ ALERT_COOLDOWN_SECONDS = 600
 # ============================================================
 
 sensor_data = {
-
     "vibration": 0.0,
-
     "activity_detected": False,
-
     "activity_level": "NORMAL",
-
     "gps_fixed": False,
-
     "latitude": None,
-
     "longitude": None,
-
     "altitude": None,
-
     "satellites": 0,
-
+    "location_name": "Waiting for GPS fix...",
     "alert_sent": False,
-
     "last_alert_level": None,
-
     "last_alert_time": None
 }
 
 
-# Lock protects sensor_data
+# ============================================================
+# REVERSE GEOCODING (Converts coordinates to real place names)
+# ============================================================
+
+_GEO_CACHE = {}
+
+def get_reverse_geocode(lat, lon):
+    """
+    Converts (latitude, longitude) into a real town/city/region name.
+    Uses OpenStreetMap Nominatim reverse geocoding with local memory caching.
+    """
+    if lat is None or lon is None:
+        return "Unknown Location (No GPS fix)"
+
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except (ValueError, TypeError):
+        return "Unknown Coordinates"
+
+    # Cache key rounded to ~11 meters
+    cache_key = (round(lat_f, 4), round(lon_f, 4))
+    if cache_key in _GEO_CACHE:
+        return _GEO_CACHE[cache_key]
+
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat_f}&lon={lon_f}&format=json&zoom=16&addressdetails=1"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "GALERT-Galamsey-Monitor/1.0 (contact: info@galert.org)",
+                "Accept": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            addr = data.get("address", {})
+            parts = []
+
+            road = addr.get("road")
+            suburb = addr.get("suburb") or addr.get("neighbourhood") or addr.get("village")
+            town = addr.get("town") or addr.get("city") or addr.get("municipality") or addr.get("county")
+            state = addr.get("state")
+            country = addr.get("country", "Ghana")
+
+            if road and suburb:
+                parts.append(f"{road}, {suburb}")
+            elif suburb:
+                parts.append(suburb)
+            elif road:
+                parts.append(road)
+
+            if town and town not in parts:
+                parts.append(town)
+            if state and state not in parts:
+                parts.append(state)
+            if country and country not in parts:
+                parts.append(country)
+
+            resolved = ", ".join(parts) if parts else data.get("display_name", f"{lat_f:.4f}, {lon_f:.4f}")
+            _GEO_CACHE[cache_key] = resolved
+            return resolved
+    except Exception as e:
+        # Fallback if offline or timeout
+        fallback = f"Coordinates {lat_f:.4f}, {lon_f:.4f} (Ghana)"
+        _GEO_CACHE[cache_key] = fallback
+        return fallback
+
+
+# ============================================================
+# ALERT HISTORY & SQLITE DATABASE PERSISTENCE
+# Stores real alerts permanently in galert.db (survives reboot)
+# ============================================================
+
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "galert.db")
+
+def init_db():
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    device_id TEXT NOT NULL DEFAULT 'GALERT-01',
+                    level TEXT NOT NULL,
+                    vibration REAL NOT NULL,
+                    gps_fixed INTEGER NOT NULL,
+                    latitude REAL,
+                    longitude REAL,
+                    altitude REAL,
+                    satellites INTEGER,
+                    location_name TEXT,
+                    email_sent INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            try:
+                conn.execute("ALTER TABLE alerts ADD COLUMN location_name TEXT")
+            except Exception:
+                pass
+            conn.commit()
+    except Exception as e:
+        print(f"[DB ERROR] SQLite init failed: {e}")
+
+def save_alert_to_db(record):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO alerts (
+                    timestamp, device_id, level, vibration,
+                    gps_fixed, latitude, longitude, altitude,
+                    satellites, location_name, email_sent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                record["timestamp"],
+                record.get("device_id", "GALERT-01"),
+                record["level"],
+                record["vibration"],
+                1 if record["gps_fixed"] else 0,
+                record.get("latitude"),
+                record.get("longitude"),
+                record.get("altitude"),
+                record.get("satellites", 0),
+                record.get("location_name", "Unknown Location"),
+                1 if record.get("email_sent") else 0
+            ))
+            conn.commit()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to save alert: {e}")
+
+def load_alerts_from_db(limit=100):
+    records = []
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT timestamp, device_id, level, vibration,
+                       gps_fixed, latitude, longitude, altitude,
+                       satellites, location_name, email_sent
+                FROM alerts
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
+            for row in cursor.fetchall():
+                records.append({
+                    "timestamp": row["timestamp"],
+                    "device_id": row["device_id"],
+                    "level": row["level"],
+                    "vibration": row["vibration"],
+                    "gps_fixed": bool(row["gps_fixed"]),
+                    "latitude": row["latitude"],
+                    "longitude": row["longitude"],
+                    "altitude": row["altitude"],
+                    "satellites": row["satellites"],
+                    "location_name": row["location_name"] or "Unknown Location",
+                    "email_sent": bool(row["email_sent"])
+                })
+    except Exception as e:
+        print(f"[DB ERROR] Failed to load alerts: {e}")
+    return records
+
+init_db()
+alert_history = load_alerts_from_db()
+
+# Lock protects sensor_data AND alert_history
 data_lock = threading.Lock()
 
 
@@ -127,11 +361,8 @@ data_lock = threading.Lock()
 # ============================================================
 
 previous_acceleration = None
-
 high_start_time = None
-
 critical_start_time = None
-
 last_alert_time = 0
 
 
@@ -140,23 +371,17 @@ last_alert_time = 0
 # ============================================================
 
 def read_word(register):
-
-    high = bus.read_byte_data(
-        MPU6050_ADDRESS,
-        register
-    )
-
-    low = bus.read_byte_data(
-        MPU6050_ADDRESS,
-        register + 1
-    )
-
-    value = (high << 8) | low
-
-    if value >= 32768:
-        value -= 65536
-
-    return value
+    if bus is None:
+        return 0
+    try:
+        high = bus.read_byte_data(MPU6050_ADDRESS, register)
+        low  = bus.read_byte_data(MPU6050_ADDRESS, register + 1)
+        value = (high << 8) | low
+        if value >= 32768:
+            value -= 65536
+        return value
+    except Exception:
+        return 0
 
 
 def read_acceleration():
@@ -238,6 +463,9 @@ def calculate_vibration():
         total_acceleration
     )
 
+    # Deadband filter: at rest / no activity, vibration is strictly 0.00
+    if vibration < 0.03:
+        vibration = 0.0
 
     return vibration
 
@@ -268,6 +496,8 @@ def determine_activity_level(vibration):
 # ============================================================
 
 def read_gps():
+    if gps_serial is None:
+        return None
 
     try:
 
@@ -282,7 +512,7 @@ def read_gps():
             return None
 
 
-        if line.startswith("$GPGGA"):
+        if line.startswith(("$GPGGA", "$GNGGA")):
 
             msg = pynmea2.parse(line)
 
@@ -350,7 +580,8 @@ def read_gps():
 def send_email_alert(
     level,
     vibration,
-    gps_info
+    gps_info,
+    alert_time=None
 ):
 
     global last_alert_time
@@ -393,113 +624,81 @@ def send_email_alert(
         # TIME
         # ----------------------------------------------------
 
-        alert_time = time.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        if not alert_time:
+            alert_time = time.strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
 
 
         # ----------------------------------------------------
-        # GPS INFORMATION
+        # GPS INFORMATION & REAL LOCATION REVERSE GEOCODING
         # ----------------------------------------------------
 
         if gps_info["gps_fixed"]:
 
             latitude = gps_info["latitude"]
-
             longitude = gps_info["longitude"]
-
             altitude = gps_info["altitude"]
-
             satellites = gps_info["satellites"]
 
+            # Reverse geocode GPS coordinates to real place name
+            real_location = get_reverse_geocode(latitude, longitude)
 
             # Google Maps link
-
             google_maps_url = (
-
-                "https://www.google.com/maps?q="
-
-                f"{latitude},{longitude}"
-
+                f"https://www.google.com/maps?q={latitude},{longitude}"
             )
 
-
             gps_section = f"""
+                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:5px solid #2563eb;border-radius:8px;padding:16px;margin:16px 0;">
+                    <p style="margin:0 0 6px 0;font-size:12px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:0.5px">
+                        📍 Real Geographic Location
+                    </p>
+                    <p style="margin:0;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4">
+                        {real_location}
+                    </p>
+                </div>
 
-                <p>
-                    <strong>Latitude:</strong>
-                    {latitude}
-                </p>
+                <table style="width:100%;font-size:13px;color:#475569;margin-bottom:16px;border-collapse:collapse">
+                    <tr><td style="padding:4px 0;color:#64748b">Coordinates</td><td style="font-weight:600;color:#0f172a">{latitude:.5f}° N, {abs(longitude):.5f}° W</td></tr>
+                    <tr><td style="padding:4px 0;color:#64748b">Altitude</td><td style="font-weight:600;color:#0f172a">{altitude} m</td></tr>
+                    <tr><td style="padding:4px 0;color:#64748b">Satellites Connected</td><td style="font-weight:600;color:#0f172a">{satellites} satellites</td></tr>
+                </table>
 
-
-                <p>
-                    <strong>Longitude:</strong>
-                    {longitude}
-                </p>
-
-
-                <p>
-                    <strong>Altitude:</strong>
-                    {altitude} m
-                </p>
-
-
-                <p>
-                    <strong>Satellites:</strong>
-                    {satellites}
-                </p>
-
-
-                <p>
-
+                <p style="margin:16px 0 0 0">
                     <a
                         href="{google_maps_url}"
-
                         style="
                             display:inline-block;
-                            padding:12px 20px;
-                            background-color:#1a73e8;
+                            padding:12px 22px;
+                            background-color:#16a34a;
                             color:white;
                             text-decoration:none;
                             border-radius:6px;
                             font-weight:bold;
+                            font-size:14px;
                         "
                     >
-
-                        📍 VIEW LOCATION ON GOOGLE MAPS
-
+                        📍 VIEW ON GOOGLE MAPS
                     </a>
-
                 </p>
-
             """
 
+            subject = f"🚨 GALERT {level} ALERT — {real_location}"
 
         else:
 
+            real_location = "Location Unknown (Searching for GPS satellites)"
+            google_maps_url = "https://maps.google.com"
+
             gps_section = """
-
-                <p>
-                    GPS position unavailable.
-                </p>
-
-                <p>
-                    The NEO-6M currently has no
-                    satellite fix.
-                </p>
-
+                <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px;margin:16px 0;">
+                    <p style="margin:0;font-weight:bold;color:#991b1b">⚠️ GPS Fix Unavailable</p>
+                    <p style="margin:4px 0 0 0;font-size:13px;color:#7f1d1d">The NEO-6M GPS receiver is searching for satellites.</p>
+                </div>
             """
 
-
-        # ----------------------------------------------------
-        # EMAIL SUBJECT
-        # ----------------------------------------------------
-
-        subject = (
-
-            f"GALERT {level} ACTIVITY ALERT"
-
-        )
+            subject = f"🚨 GALERT {level} ACTIVITY ALERT"
 
 
         # ----------------------------------------------------
@@ -778,43 +977,29 @@ style="
 
         plain_text = f"""
 
-GALERT ACTIVITY ALERT
+GALERT {level} ACTIVITY ALERT
+========================================
 
-Activity Level: {level}
+REAL LOCATION:
+📍 {real_location}
 
-Vibration:
-{vibration:.2f} m/s²
+SENSOR INFORMATION:
+- Activity Level: {level}
+- Ground Vibration: {vibration:.2f} m/s²
+- Alert Time: {alert_time}
 
-Time:
-{alert_time}
+GPS TELEMETRY:
+- GPS Status: {'FIXED' if gps_info['gps_fixed'] else 'SEARCHING'}
+- Coordinates: {latitude}, {longitude}
+- Altitude: {altitude} m
+- Satellites: {satellites}
 
+GOOGLE MAPS:
+{google_maps_url}
 
-GPS INFORMATION
----------------
-
-GPS Fixed:
-{gps_info["gps_fixed"]}
-
-Latitude:
-{gps_info["latitude"]}
-
-Longitude:
-{gps_info["longitude"]}
-
-Altitude:
-{gps_info["altitude"]}
-
-Satellites:
-{gps_info["satellites"]}
-
-
-This alert indicates detected
-sensor activity.
-
-It does not by itself confirm
-galamsey activity.
-
-Human investigation is required.
+IMPORTANT:
+This alert was automatically triggered by ground vibration sensors. Human field investigation is recommended.
+========================================
 
 """
 
@@ -906,9 +1091,6 @@ Human investigation is required.
         print("")
 
 
-        last_alert_time = time.time()
-
-
         return True
 
 
@@ -936,8 +1118,69 @@ Human investigation is required.
 
         print("")
 
-
         return False
+
+
+# ============================================================
+# RECORD ALERT (PERSISTENT DB + IN-MEMORY + EMAIL DISPATCH)
+# Alerts are ALWAYS saved to SQLite DB, even if email fails/not set
+# ============================================================
+
+def record_alert(level, vibration, gps_info):
+    global last_alert_time
+    alert_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    last_alert_time = time.time()
+
+    # Attempt email dispatch if credentials configured
+    email_sent = False
+    if EMAIL_SENDER and EMAIL_PASSWORD and EMAIL_RECEIVER:
+        try:
+            print(f"Sending email alert for {level} activity...")
+            email_sent = bool(send_email_alert(level, vibration, gps_info, alert_time))
+        except Exception as e:
+            print(f"[EMAIL ERROR] {e}")
+            email_sent = False
+    else:
+        print(f"[ALERT] Real activity detected ({level}). Logging to database.")
+
+    # Resolve real geographic location name
+    lat = gps_info.get("latitude")
+    lon = gps_info.get("longitude")
+    if gps_info.get("gps_fixed") and lat is not None and lon is not None:
+        location_name = get_reverse_geocode(lat, lon)
+    else:
+        location_name = "Unknown Location (No GPS fix)"
+
+    alert_record = {
+        "timestamp": alert_time,
+        "device_id": "GALERT-01",
+        "level": level,
+        "vibration": round(vibration, 3),
+        "gps_fixed": bool(gps_info.get("gps_fixed", False)),
+        "latitude": lat,
+        "longitude": lon,
+        "altitude": gps_info.get("altitude"),
+        "satellites": gps_info.get("satellites", 0),
+        "location_name": location_name,
+        "email_sent": bool(email_sent)
+    }
+
+    # 1. Save to SQLite database (persists permanently on Linux)
+    save_alert_to_db(alert_record)
+
+    # 2. Update live in-memory registry
+    with data_lock:
+        alert_history.insert(0, alert_record)
+        if len(alert_history) > 100:
+            alert_history.pop()
+
+        sensor_data["alert_sent"] = True
+        sensor_data["last_alert_level"] = level
+        sensor_data["last_alert_time"] = alert_time
+        sensor_data["location_name"] = location_name
+
+    print(f"[ALERT RECORDED IN DB] {level} at {location_name} | Vibration: {vibration:.3f} m/s^2 | Email Sent: {email_sent}\n")
+    return alert_record
 
 
 # ============================================================
@@ -951,223 +1194,59 @@ def check_alert(
 ):
 
     global high_start_time
-
     global critical_start_time
-
     global last_alert_time
 
-
     current_time = time.time()
-
 
     # ========================================================
     # NORMAL
     # ========================================================
 
     if level == "NORMAL":
-
         high_start_time = None
-
         critical_start_time = None
-
         return
-
 
     # ========================================================
     # CRITICAL
     # ========================================================
 
     if level == "CRITICAL":
-
-        # Reset HIGH timer
-
         high_start_time = None
 
-
-        # Start CRITICAL timer
-
         if critical_start_time is None:
+            critical_start_time = current_time
+            print("CRITICAL activity detected. Starting 2-second timer...")
 
-            critical_start_time = (
-                current_time
-            )
-
-            print(
-                "CRITICAL activity detected."
-            )
-
-            print(
-                "Starting 2-second timer..."
-            )
-
-
-        elapsed = (
-
-            current_time
-            -
-            critical_start_time
-
-        )
-
-
-        # Check persistence
+        elapsed = current_time - critical_start_time
 
         if elapsed >= CRITICAL_PERSISTENCE_SECONDS:
-
-            # Check cooldown
-
-            if (
-
-                current_time
-                -
-                last_alert_time
-
-                >= ALERT_COOLDOWN_SECONDS
-
-            ):
-
-                print(
-                    "CRITICAL activity persisted."
-                )
-
-                print(
-                    "Sending email alert..."
-                )
-
-
-                sent = send_email_alert(
-
-                    level,
-
-                    vibration,
-
-                    gps_info
-
-                )
-
-
-                if sent:
-
-                    with data_lock:
-
-                        sensor_data[
-                            "alert_sent"
-                        ] = True
-
-                        sensor_data[
-                            "last_alert_level"
-                        ] = level
-
-                        sensor_data[
-                            "last_alert_time"
-                        ] = time.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
-
-
-            # Prevent another immediate alert
-
+            if current_time - last_alert_time >= ALERT_COOLDOWN_SECONDS:
+                print("CRITICAL activity persisted.")
+                record_alert(level, vibration, gps_info)
             critical_start_time = None
-
-
         return
-
 
     # ========================================================
     # HIGH
     # ========================================================
 
     if level == "HIGH":
-
-        # Reset CRITICAL timer
-
         critical_start_time = None
 
-
-        # Start HIGH timer
-
         if high_start_time is None:
+            high_start_time = current_time
+            print("HIGH activity detected. Starting 10-second timer...")
 
-            high_start_time = (
-                current_time
-            )
-
-            print(
-                "HIGH activity detected."
-            )
-
-            print(
-                "Starting 10-second timer..."
-            )
-
-
-        elapsed = (
-
-            current_time
-            -
-            high_start_time
-
-        )
-
-
-        # Check persistence
+        elapsed = current_time - high_start_time
 
         if elapsed >= HIGH_PERSISTENCE_SECONDS:
-
-            # Check cooldown
-
-            if (
-
-                current_time
-                -
-                last_alert_time
-
-                >= ALERT_COOLDOWN_SECONDS
-
-            ):
-
-                print(
-                    "HIGH activity persisted."
-                )
-
-                print(
-                    "Sending email alert..."
-                )
-
-
-                sent = send_email_alert(
-
-                    level,
-
-                    vibration,
-
-                    gps_info
-
-                )
-
-
-                if sent:
-
-                    with data_lock:
-
-                        sensor_data[
-                            "alert_sent"
-                        ] = True
-
-                        sensor_data[
-                            "last_alert_level"
-                        ] = level
-
-                        sensor_data[
-                            "last_alert_time"
-                        ] = time.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
-
-
-            # Reset timer
-
+            if current_time - last_alert_time >= ALERT_COOLDOWN_SECONDS:
+                print("HIGH activity persisted.")
+                record_alert(level, vibration, gps_info)
             high_start_time = None
+        return
 
 
 # ============================================================
@@ -1298,6 +1377,15 @@ def sensor_loop():
                     ]
 
 
+                    if gps_result["gps_fixed"] and gps_result["latitude"] is not None and gps_result["longitude"] is not None:
+                        sensor_data[
+                            "location_name"
+                        ] = get_reverse_geocode(
+                            gps_result["latitude"],
+                            gps_result["longitude"]
+                        )
+
+
                 # Create GPS snapshot
 
                 gps_info = {
@@ -1325,7 +1413,13 @@ def sensor_loop():
                     "satellites":
                         sensor_data[
                             "satellites"
-                        ]
+                        ],
+
+                    "location_name":
+                        sensor_data.get(
+                            "location_name",
+                            "Unknown Location"
+                        )
 
                 }
 
@@ -1396,7 +1490,7 @@ def dashboard():
 
 
 # ============================================================
-# API ROUTE
+# API ROUTE — live sensor data
 # ============================================================
 
 @app.route("/api/data")
@@ -1407,6 +1501,54 @@ def api_data():
         return jsonify(
             sensor_data
         )
+
+
+# ============================================================
+# API ROUTE — alert history
+# ============================================================
+
+@app.route("/api/alerts")
+def api_alerts():
+    return jsonify(load_alerts_from_db())
+
+
+@app.route("/api/alerts/clear", methods=["POST"])
+def api_clear_alerts():
+    global alert_history
+    with data_lock:
+        alert_history = []
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute("DELETE FROM alerts")
+                conn.commit()
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok", "message": "Alert history cleared"})
+
+
+# ============================================================
+# API ROUTE — device location renaming
+# ============================================================
+
+device_labels = {
+    "GALERT-01": "Site A — Kumasi Central",
+    "GALERT-02": "Site B — Obuasi Road",
+    "GALERT-03": "Site C — Manso Forest",
+}
+
+@app.route("/api/devices/rename", methods=["POST"])
+def api_rename_device():
+    data = request.get_json(force=True, silent=True) or {}
+    dev_id = data.get("id")
+    new_label = data.get("label", "").strip()
+    if dev_id and new_label:
+        device_labels[dev_id] = new_label
+        return jsonify({"status": "ok", "id": dev_id, "label": new_label})
+    return jsonify({"error": "invalid payload"}), 400
+
+@app.route("/api/devices/labels")
+def api_device_labels():
+    return jsonify(device_labels)
 
 
 # ============================================================

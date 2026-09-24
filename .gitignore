@@ -1,5 +1,30 @@
+# Virtual Environments
+venv/
 .venv/
+env/
+ENV/
+
+# Environment Variables & Secrets
 .env
+
+# Python Bytecode & Cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local SQLite Database & Journal
 galert.db
+galert.db-journal
+galert.db-wal
+galert.db-shm
+
+# IDE & OS Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
