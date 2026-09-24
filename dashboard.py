@@ -172,27 +172,12 @@ else:
 #
 # It does NOT provide humidity.
 
-if not MOCK_HARDWARE:
-
-    try:
-
-        import board
-        import busio
-        import adafruit_bmp280
-
-        BMP280_LIBRARY_AVAILABLE = True
-
-    except ImportError as e:
-
-        print(
-            f"[BMP280 WARNING] "
-            f"BMP280 library unavailable: {e}"
-        )
-
-        BMP280_LIBRARY_AVAILABLE = False
-
-else:
-
+try:
+    import board
+    import busio
+    import adafruit_bmp280
+    BMP280_LIBRARY_AVAILABLE = True
+except Exception as e:
     BMP280_LIBRARY_AVAILABLE = False
 
 
@@ -269,121 +254,58 @@ def init_hardware():
 
 
     # ========================================================
-    # MOCK MODE
+    # MPU-6050
     # ========================================================
-
     if MOCK_HARDWARE:
-
         bus = smbus.SMBus(1)
-
-        gps_serial = serial.Serial(
-            GPS_PORT,
-            GPS_BAUDRATE,
-            timeout=1
-        )
-
-        print(
-            "[HARDWARE] Running in MOCK mode "
-            "(simulated sensors)"
-        )
-
-        return
-
-
-    # ========================================================
-    # REAL MPU-6050
-    # ========================================================
-
-    if smbus is not None:
-
+        print("[HARDWARE] MPU-6050: MOCK mode (simulated)")
+    elif smbus is not None:
         try:
-
             bus = smbus.SMBus(1)
-
-            bus.write_byte_data(
-                MPU6050_ADDRESS,
-                PWR_MGMT_1,
-                0
-            )
-
-            print(
-                "[HARDWARE] MPU-6050 initialized "
-                "successfully on I2C bus 1 (0x68)"
-            )
-
+            bus.write_byte_data(MPU6050_ADDRESS, PWR_MGMT_1, 0)
+            print("[HARDWARE] MPU-6050 initialized successfully on I2C bus 1 (0x68)")
         except Exception as e:
-
-            print(
-                f"[HARDWARE WARNING] "
-                f"Could not initialize MPU-6050: {e}"
-            )
-
+            print(f"[HARDWARE WARNING] Could not initialize MPU-6050: {e}")
             bus = None
-
     else:
-
-        print(
-            "[HARDWARE WARNING] "
-            "smbus / smbus2 module not installed"
-        )
-
+        print("[HARDWARE WARNING] smbus / smbus2 module not installed")
         bus = None
 
-
     # ========================================================
-    # REAL BMP280
+    # NEO-6M GPS
     # ========================================================
-
-    if BMP280_LIBRARY_AVAILABLE:
-
-        try:
-
-            # Use the same I2C bus as the MPU-6050.
-            #
-            # MPU-6050 = 0x68
-            # BMP280   = 0x76
-
-            i2c = busio.I2C(
-                board.SCL,
-                board.SDA
-            )
-
-
-            bmp280 = (
-                adafruit_bmp280
-                .Adafruit_BMP280_I2C(
-                    i2c,
-                    address=BMP280_ADDRESS
-                )
-            )
-
-
-            bmp280.sea_level_pressure = (
-                BMP280_SEA_LEVEL_PRESSURE
-            )
-
-
-            print(
-                "[HARDWARE] BMP280 initialized "
-                "successfully on I2C address 0x76"
-            )
-
-
-        except Exception as e:
-
-            print(
-                f"[HARDWARE WARNING] "
-                f"Could not initialize BMP280: {e}"
-            )
-
-            bmp280 = None
-
+    if MOCK_HARDWARE:
+        gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=1)
+        print("[HARDWARE] GPS: MOCK mode (simulated)")
     else:
+        try:
+            gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=1)
+            print(f"[HARDWARE] GPS serial connected on {GPS_PORT} @ {GPS_BAUDRATE} baud")
+        except Exception as e:
+            print(f"[HARDWARE WARNING] Could not open GPS serial port {GPS_PORT}: {e}")
+            gps_serial = None
 
-        print(
-            "[HARDWARE WARNING] "
-            "BMP280 library not available"
-        )
+    # ========================================================
+    # BMP280 SENSOR (DEDICATED TEMPERATURE & PRESSURE)
+    # ========================================================
+    if BMP280_LIBRARY_AVAILABLE:
+        try:
+            i2c = busio.I2C(board.SCL, board.SDA)
+            for addr in (BMP280_ADDRESS, 0x77):
+                try:
+                    bmp280 = adafruit_bmp280.Adafruit_BMP280_I2C(i2c, address=addr)
+                    bmp280.sea_level_pressure = BMP280_SEA_LEVEL_PRESSURE
+                    print(f"[HARDWARE] BMP280 initialized successfully on I2C address 0x{addr:02X}")
+                    break
+                except Exception:
+                    continue
+            if bmp280 is None:
+                print(f"[HARDWARE WARNING] BMP280 not detected on I2C address 0x{BMP280_ADDRESS:02X} or 0x77")
+        except Exception as e:
+            print(f"[HARDWARE WARNING] Could not initialize BMP280: {e}")
+            bmp280 = None
+    else:
+        print("[HARDWARE WARNING] BMP280 library (adafruit_bmp280) not available")
 
 
     # ========================================================
@@ -1161,128 +1083,57 @@ def calculate_vibration():
 # ============================================================
 # READ BMP280
 # ============================================================
-
 def read_bmp280():
-
     """
-    Reads temperature, pressure and altitude
-    from the BMP280 sensor.
+    Reads temperature, pressure and altitude from the BMP280 sensor.
+    The BMP280 sensor is the dedicated source for ambient temperature.
     """
+    global bmp280
 
-    # --------------------------------------------------------
-    # MOCK MODE
-    # --------------------------------------------------------
+    # 1. Attempt auto-connection if not yet initialized
+    if bmp280 is None and BMP280_LIBRARY_AVAILABLE:
+        try:
+            i2c = busio.I2C(board.SCL, board.SDA)
+            for addr in (BMP280_ADDRESS, 0x77):
+                try:
+                    bmp280 = adafruit_bmp280.Adafruit_BMP280_I2C(i2c, address=addr)
+                    bmp280.sea_level_pressure = BMP280_SEA_LEVEL_PRESSURE
+                    print(f"[HARDWARE] BMP280 auto-connected on 0x{addr:02X}")
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
+    # 2. PRIORITY 1: Physical BMP280 sensor reading (Real Temperature)
+    if bmp280 is not None:
+        try:
+            temp = float(bmp280.temperature)
+            pres = float(bmp280.pressure)
+            alt = float(bmp280.altitude)
+            return {
+                "temperature": round(temp, 2),
+                "pressure": round(pres, 2),
+                "environment_altitude": round(alt, 2)
+            }
+        except Exception as e:
+            print(f"[BMP280 READ ERROR] {e}")
+
+    # 3. PRIORITY 2: Mock mode fallback ONLY if MOCK_HARDWARE is true and sensor absent
     if MOCK_HARDWARE:
-
         return {
-
-            "temperature":
-                round(
-                    random.uniform(
-                        25.0,
-                        32.0
-                    ),
-                    2
-                ),
-
-            "pressure":
-                round(
-                    random.uniform(
-                        1005.0,
-                        1015.0
-                    ),
-                    2
-                ),
-
-            "environment_altitude":
-                round(
-                    random.uniform(
-                        20.0,
-                        60.0
-                    ),
-                    2
-                )
+            "temperature": round(random.uniform(25.0, 32.0), 2),
+            "pressure": round(random.uniform(1005.0, 1015.0), 2),
+            "environment_altitude": round(random.uniform(20.0, 60.0), 2)
         }
 
+    # 4. Sensor unavailable
+    return {
+        "temperature": None,
+        "pressure": None,
+        "environment_altitude": None
+    }
 
-    # --------------------------------------------------------
-    # Sensor unavailable
-    # --------------------------------------------------------
-
-    if bmp280 is None:
-
-        return {
-
-            "temperature": None,
-
-            "pressure": None,
-
-            "environment_altitude": None
-
-        }
-
-
-    # --------------------------------------------------------
-    # Read real sensor
-    # --------------------------------------------------------
-
-    try:
-
-        temperature = (
-            bmp280.temperature
-        )
-
-
-        pressure = (
-            bmp280.pressure
-        )
-
-
-        altitude = (
-            bmp280.altitude
-        )
-
-
-        return {
-
-            "temperature":
-                round(
-                    temperature,
-                    2
-                ),
-
-            "pressure":
-                round(
-                    pressure,
-                    2
-                ),
-
-            "environment_altitude":
-                round(
-                    altitude,
-                    2
-                )
-
-        }
-
-
-    except Exception as e:
-
-        print(
-            f"[BMP280 ERROR] {e}"
-        )
-
-
-        return {
-
-            "temperature": None,
-
-            "pressure": None,
-
-            "environment_altitude": None
-
-        }
 
 
 # ============================================================
