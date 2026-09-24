@@ -108,6 +108,23 @@
 
         </nav>
 
+        <div class="sidebar-user-panel">
+            <div class="sidebar-user-info">
+                <div class="sidebar-user-avatar">A</div>
+                <div class="sidebar-user-details">
+                    <span class="sidebar-user-name">Administrator</span>
+                    <span class="sidebar-user-email">admin@galert.com</span>
+                </div>
+            </div>
+            <a href="/logout" class="sidebar-logout-btn" title="Sign out" aria-label="Sign out">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+            </a>
+        </div>
+
     </aside>
 
 
@@ -148,6 +165,14 @@
                     <span class="status-dot"></span>
                     System Online
                 </div>
+                <a href="/logout" class="header-logout-btn" title="Sign out" aria-label="Sign out">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                    <span>Sign Out</span>
+                </a>
             </div>
 
         </header>
@@ -183,6 +208,27 @@
                 <div class="card">
                     <h3>Satellites</h3>
                     <div class="value" id="satellites">0</div>
+                </div>
+
+                <div class="card">
+                    <h3>Temperature</h3>
+                    <div class="value">
+                        <span id="temperature">--</span> °C
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Pressure</h3>
+                    <div class="value">
+                        <span id="pressure">--</span> hPa
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Env. Altitude</h3>
+                    <div class="value">
+                        <span id="env-altitude">--</span> m
+                    </div>
                 </div>
 
             </section>
@@ -290,6 +336,11 @@
                 <div class="card">
                     <h3>NEO-6M GPS</h3>
                     <div id="gps-chip-status" class="badge-normal">CONNECTED</div>
+                </div>
+
+                <div class="card">
+                    <h3>BMP280</h3>
+                    <div id="bmp-chip-status" class="badge-normal">CONNECTED</div>
                 </div>
 
                 <div class="card">
@@ -403,6 +454,50 @@
                         <div class="sensor-row">
                             <span>Protocol</span>
                             <span>NMEA 0183 (GPGGA)</span>
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- BMP280 CARD -->
+
+                <div class="panel">
+
+                    <div class="sensor-header">
+                        <div>
+                            <h2>BMP280 Environmental Sensor</h2>
+                            <p class="sensor-sub">Temperature · Pressure · Altitude</p>
+                        </div>
+                        <span class="chip-badge">I²C · 0x76</span>
+                    </div>
+
+                    <div class="sensor-rows">
+
+                        <div class="sensor-row">
+                            <span>Temperature</span>
+                            <span id="s-temperature">-- °C</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Atmospheric Pressure</span>
+                            <span id="s-pressure">-- hPa</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Environmental Altitude</span>
+                            <span id="s-env-altitude">-- m</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Sea-level Reference</span>
+                            <span>1013.25 hPa</span>
+                        </div>
+
+                        <div class="sensor-row">
+                            <span>Interface</span>
+                            <span>I²C (adafruit_bmp280)</span>
                         </div>
 
                     </div>

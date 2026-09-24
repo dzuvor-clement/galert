@@ -325,33 +325,80 @@ function makeDeviceIcon(color, isActive) {
 }
 
 function devicePopupHtml(d) {
-    const locName = (d.data && d.data.location_name) ? d.data.location_name : null;
-    return `<div style="font-family:Arial,sans-serif;min-width:210px">
-        <strong style="font-size:14px">${d.id}</strong><br>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
-            <span style="font-size:12px;color:#6b7280">${d.label}</span>
-            <button onclick="openRenameModal('${d.id}', event)" class="map-rename-link" title="Rename location">✏️ Edit</button>
+    const locName   = (d.data && d.data.location_name) ? d.data.location_name : null;
+    const level     = d.data ? d.data.activity_level : 'UNKNOWN';
+    const vibration = d.data ? d.data.vibration.toFixed(3) : '0.000';
+    const levelColor = level === 'CRITICAL' ? '#dc2626' : level === 'HIGH' ? '#f59e0b' : '#16a34a';
+    const levelBg    = level === 'CRITICAL' ? '#fef2f2' : level === 'HIGH' ? '#fffbeb' : '#f0fdf4';
+
+    return `<div style="
+        font-family:'Segoe UI',Arial,sans-serif;
+        min-width:240px;
+        max-width:270px;
+        border-radius:12px;
+        overflow:hidden;
+        box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    ">
+        <!-- Header -->
+        <div style="background:#111827;padding:14px 16px 12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <div style="font-size:15px;font-weight:700;color:#fff;letter-spacing:0.5px;">${d.id}</div>
+                    <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${d.label}</div>
+                </div>
+                <span style="
+                    padding:3px 9px;
+                    border-radius:20px;
+                    font-size:10px;
+                    font-weight:700;
+                    letter-spacing:0.5px;
+                    background:${levelBg};
+                    color:${levelColor};
+                ">${level}</span>
+            </div>
         </div>
-        ${locName ? `<div style="font-size:11px;color:#0f766e;background:#ccfbf1;padding:4px 8px;border-radius:4px;margin:6px 0;line-height:1.3">📍 <strong>${locName}</strong></div>` : ''}
-        <div style="margin:6px 0;padding:4px 10px;border-radius:4px;
-            background:${d.color}22;color:${d.color};
-            font-weight:700;font-size:12px;display:inline-block">
-            ${d.data ? d.data.activity_level : 'UNKNOWN'}
+        <!-- Body -->
+        <div style="background:#fff;padding:12px 16px;">
+            ${locName ? `<div style="
+                display:flex;align-items:flex-start;gap:6px;
+                background:#f0fdf4;
+                border:1px solid #bbf7d0;
+                border-radius:8px;
+                padding:8px 10px;
+                margin-bottom:10px;
+            ">
+                <span style="font-size:13px;line-height:1;">📍</span>
+                <span style="font-size:11px;color:#065f46;font-weight:600;line-height:1.4;">${locName}</span>
+            </div>` : ''}
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Vibration</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${vibration} m/s²</td>
+                </tr>
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Latitude</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${d.lat.toFixed(5)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:5px 0;color:#6b7280;">Longitude</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${d.lon.toFixed(5)}</td>
+                </tr>
+            </table>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+                <button onclick="openRenameModal('${d.id}', event)"
+                    style="flex:1;padding:7px;background:#f9fafb;border:1px solid #e5e7eb;
+                    border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;color:#374151;
+                    transition:background 0.15s;">
+                    ✏ Rename
+                </button>
+                <button onclick="selectDevice('${d.id}')"
+                    style="flex:2;padding:7px;background:#111827;border:none;
+                    border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;color:#fff;
+                    letter-spacing:0.3px;">
+                    Prioritize ${d.id}
+                </button>
+            </div>
         </div>
-        <table style="font-size:12px;color:#374151;width:100%;margin-top:4px;border-collapse:collapse">
-            <tr><td style="padding:2px 0;color:#6b7280">Vibration</td>
-                <td style="font-weight:600">${d.data ? d.data.vibration.toFixed(3) + ' m/s²' : '0.000 m/s²'}</td></tr>
-            <tr><td style="color:#6b7280">Latitude</td>
-                <td style="font-weight:600">${d.lat.toFixed(4)}</td></tr>
-            <tr><td style="color:#6b7280">Longitude</td>
-                <td style="font-weight:600">${d.lon.toFixed(4)}</td></tr>
-        </table>
-        <button onclick="selectDevice('${d.id}')"
-            style="margin-top:8px;width:100%;padding:6px;
-            background:#1f2937;color:white;border:none;
-            border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
-            Prioritize ${d.id}
-        </button>
     </div>`;
 }
 
@@ -390,25 +437,86 @@ function updateMaps(lat, lon) {
 }
 
 function popupForLive() {
-    const d = DEVICES['GALERT-01'];
+    const d       = DEVICES['GALERT-01'];
     const locText = (d.data && d.data.location_name) ? d.data.location_name : null;
-    return `<div style="font-family:Arial,sans-serif;min-width:210px">
-        <strong style="font-size:14px">GALERT-01</strong><br>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
-            <span style="font-size:12px;color:#6b7280">${d.label}</span>
-            <button onclick="openRenameModal('GALERT-01', event)" class="map-rename-link" title="Rename location">✏️ Edit</button>
+    const level   = (d.data && d.data.activity_level) ? d.data.activity_level : 'LIVE';
+    const vib     = (d.data && d.data.vibration != null) ? d.data.vibration.toFixed(3) : '--';
+    const temp    = (d.data && d.data.temperature    != null) ? d.data.temperature.toFixed(1)    + ' °C'  : '--';
+    const press   = (d.data && d.data.pressure       != null) ? d.data.pressure.toFixed(1)       + ' hPa' : '--';
+    const sats    = (d.data && d.data.satellites != null)     ? d.data.satellites                         : '--';
+    const levelColor = level === 'CRITICAL' ? '#dc2626' : level === 'HIGH' ? '#f59e0b' : '#16a34a';
+    const levelBg    = level === 'CRITICAL' ? '#fef2f2' : level === 'HIGH' ? '#fffbeb' : '#f0fdf4';
+
+    return `<div style="
+        font-family:'Segoe UI',Arial,sans-serif;
+        min-width:250px;
+        max-width:280px;
+        border-radius:12px;
+        overflow:hidden;
+        box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    ">
+        <!-- Header -->
+        <div style="background:#111827;padding:14px 16px 12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:7px;">
+                        <div style="width:8px;height:8px;background:#22c55e;border-radius:50%;box-shadow:0 0 6px #22c55e;"></div>
+                        <span style="font-size:15px;font-weight:700;color:#fff;letter-spacing:0.5px;">GALERT-01</span>
+                    </div>
+                    <div style="font-size:11px;color:#9ca3af;margin-top:3px;padding-left:15px;">${d.label}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                    <span style="
+                        padding:3px 9px;border-radius:20px;
+                        font-size:10px;font-weight:700;letter-spacing:0.5px;
+                        background:${levelBg};color:${levelColor};
+                    ">${level}</span>
+                    <span style="font-size:9px;color:#4b5563;background:#1f2937;padding:2px 6px;border-radius:4px;">LIVE HARDWARE</span>
+                </div>
+            </div>
         </div>
-        ${locText ? `<div style="font-size:11px;color:#0f766e;background:#ccfbf1;padding:4px 8px;border-radius:4px;margin:6px 0;line-height:1.3">📍 <strong>${locText}</strong></div>` : ''}
-        <div style="margin:4px 0 6px 0;padding:3px 8px;border-radius:4px;
-            background:#dcfce7;color:#16a34a;font-weight:700;font-size:12px;display:inline-block">
-            LIVE PI
+        <!-- Body -->
+        <div style="background:#fff;padding:12px 16px;">
+            ${locText ? `<div style="
+                display:flex;align-items:flex-start;gap:6px;
+                background:#f0fdf4;border:1px solid #bbf7d0;
+                border-radius:8px;padding:8px 10px;margin-bottom:10px;
+            ">
+                <span style="font-size:13px;line-height:1;">📍</span>
+                <span style="font-size:11px;color:#065f46;font-weight:600;line-height:1.4;">${locText}</span>
+            </div>` : ''}
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Vibration</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${vib} m/s²</td>
+                </tr>
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Temperature</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${temp}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Pressure</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${press}</td>
+                </tr>
+                <tr>
+                    <td style="padding:5px 0;color:#6b7280;">Satellites</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${sats}</td>
+                </tr>
+            </table>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+                <button onclick="openRenameModal('GALERT-01', event)"
+                    style="flex:1;padding:7px;background:#f9fafb;border:1px solid #e5e7eb;
+                    border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;color:#374151;">
+                    ✏ Rename
+                </button>
+                <button onclick="selectDevice('GALERT-01')"
+                    style="flex:2;padding:7px;background:#16a34a;border:none;
+                    border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;color:#fff;
+                    letter-spacing:0.3px;">
+                    Prioritize GALERT-01
+                </button>
+            </div>
         </div>
-        <button onclick="selectDevice('GALERT-01')"
-            style="margin-top:4px;width:100%;padding:6px;
-            background:#16a34a;color:white;border:none;
-            border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
-            Prioritize GALERT-01
-        </button>
     </div>`;
 }
 
@@ -593,6 +701,15 @@ function renderDashboard(data) {
         document.getElementById("altitude").textContent  = data.altitude.toFixed(1);
         document.getElementById("sats2").textContent     = data.satellites;
     }
+
+    // BMP280 — Dashboard summary cards
+    const tempEl   = document.getElementById("temperature");
+    const pressEl  = document.getElementById("pressure");
+    const envAltEl = document.getElementById("env-altitude");
+
+    if (tempEl)   tempEl.textContent   = data.temperature           != null ? data.temperature.toFixed(1)           : "--";
+    if (pressEl)  pressEl.textContent  = data.pressure              != null ? data.pressure.toFixed(1)              : "--";
+    if (envAltEl) envAltEl.textContent = data.environment_altitude  != null ? data.environment_altitude.toFixed(1)  : "--";
 }
 
 
@@ -640,6 +757,23 @@ function renderSensors(data) {
             document.getElementById(id).textContent = "--";
         });
     }
+
+    // BMP280 — Sensor panel
+    const bmpStatus  = document.getElementById("bmp-chip-status");
+    const sTempEl    = document.getElementById("s-temperature");
+    const sPressEl   = document.getElementById("s-pressure");
+    const sEnvAltEl  = document.getElementById("s-env-altitude");
+
+    const bmpAvail = data.temperature != null;
+
+    if (bmpStatus) {
+        bmpStatus.textContent = bmpAvail ? "CONNECTED" : "UNAVAILABLE";
+        bmpStatus.className   = bmpAvail ? "badge-normal" : "badge-high";
+    }
+
+    if (sTempEl)   sTempEl.textContent   = bmpAvail                      ? data.temperature.toFixed(2)           + " °C"  : "--";
+    if (sPressEl)  sPressEl.textContent  = data.pressure           != null ? data.pressure.toFixed(2)             + " hPa" : "--";
+    if (sEnvAltEl) sEnvAltEl.textContent = data.environment_altitude != null ? data.environment_altitude.toFixed(2) + " m"   : "--";
 }
 
 

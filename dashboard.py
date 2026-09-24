@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 
 import math
 import time
@@ -33,9 +33,10 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
 IS_LINUX = os.name != "nt"
 
+# Set to False by default to use real data from physical sensors (MPU-6050, BMP280, NEO-6M GPS)
 MOCK_HARDWARE = os.getenv(
     "MOCK_HARDWARE",
-    "false" if IS_LINUX else "true"
+    "false"
 ).lower() in ("true", "1", "yes")
 
 
@@ -200,6 +201,8 @@ else:
 # ============================================================
 
 app = Flask(__name__)
+
+app.secret_key = os.getenv("SECRET_KEY", "galert-auth-secret-key-2026")
 
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
@@ -3052,11 +3055,45 @@ def sensor_loop():
 
 
 # ============================================================
+# AUTHENTICATION ROUTES
+# ============================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("logged_in"):
+        return redirect(url_for("dashboard"))
+
+    error = None
+    email = ""
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "").strip()
+
+        if email == "admin@galert.com" and password == "admin123":
+            session["logged_in"] = True
+            session["user_email"] = email
+            return redirect(url_for("dashboard"))
+        else:
+            error = "Invalid email or password. Please try again."
+
+    return render_template("login.html", error=error, email=email)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ============================================================
 # DASHBOARD ROUTE
 # ============================================================
 
 @app.route("/")
 def dashboard():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
 
     return render_template(
         "index.html"
