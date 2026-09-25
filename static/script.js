@@ -288,8 +288,9 @@ function renderHistory() {
 // ============================================================
 
 const map = L.map("map").setView([6.6885, -1.6244], 11);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap contributors"
+L.tileLayer("https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
+    attribution: "&copy; Google Maps",
+    maxZoom: 20
 }).addTo(map);
 
 let marker     = null;
@@ -301,8 +302,9 @@ let mapCentred = false;
 // ============================================================
 
 const mapFull = L.map("mapFull").setView([6.6885, -1.6244], 11);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap contributors"
+L.tileLayer("https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
+    attribution: "&copy; Google Maps",
+    maxZoom: 20
 }).addTo(mapFull);
 
 let markerFull     = null;
@@ -410,6 +412,10 @@ function devicePopupHtml(d) {
                     Prioritize ${d.id}
                 </button>
             </div>
+            <a href="https://www.google.com/maps?q=${d.lat},${d.lon}" target="_blank" rel="noopener"
+                style="display:block;margin-top:8px;padding:6px;text-align:center;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:11px;font-weight:700;color:#1d4ed8;text-decoration:none;">
+                🗺 Open in Google Maps ↗
+            </a>
         </div>
     </div>`;
 }
@@ -566,6 +572,10 @@ function popupForLive() {
                     Prioritize GALERT-01
                 </button>
             </div>
+            <a href="https://www.google.com/maps?q=${(d.data && d.data.latitude != null) ? d.data.latitude : d.lat},${(d.data && d.data.longitude != null) ? d.data.longitude : d.lon}" target="_blank" rel="noopener"
+                style="display:block;margin-top:8px;padding:6px;text-align:center;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:11px;font-weight:700;color:#1d4ed8;text-decoration:none;">
+                🗺 Open in Google Maps ↗
+            </a>
         </div>
     </div>`;
 }

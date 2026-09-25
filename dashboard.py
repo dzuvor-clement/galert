@@ -372,6 +372,9 @@ ALERT_COOLDOWN_SECONDS = int(os.getenv("HIGH_ALERT_COOLDOWN_SECONDS", "600"))
 # If continuous critical vibration never stops, send follow-up reminder every 60s
 CRITICAL_REPEAT_SECONDS = int(os.getenv("CRITICAL_REPEAT_SECONDS", "60"))
 
+# Google Maps API Key for high-accuracy reverse geocoding
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+
 
 # ============================================================
 # SHARED SENSOR DATA
@@ -443,200 +446,81 @@ _GEO_CACHE = {}
 # ============================================================
 
 def get_reverse_geocode(lat, lon):
-
     """
-    Converts GPS coordinates into a real place name
-    using OpenStreetMap Nominatim.
+    Converts GPS coordinates into real place names.
+    Uses Google Maps Geocoding API (when GOOGLE_MAPS_API_KEY is configured)
+    and Google-aligned reverse geocoding to retrieve accurate locality,
+    town, district, and region names in Ghana instead of OSM.
     """
-
     if lat is None or lon is None:
-
-        return (
-            "Unknown Location "
-            "(No GPS fix)"
-        )
-
+        return "Unknown Location (No GPS fix)"
 
     try:
-
         lat_f = float(lat)
-
         lon_f = float(lon)
-
     except (ValueError, TypeError):
-
         return "Unknown Coordinates"
 
-
-    cache_key = (
-        round(lat_f, 4),
-        round(lon_f, 4)
-    )
-
-
+    cache_key = (round(lat_f, 4), round(lon_f, 4))
     if cache_key in _GEO_CACHE:
+        return _GEO_CACHE[cache_key]
 
-        return _GEO_CACHE[
-            cache_key
-        ]
+    resolved = None
 
-
-    url = (
-        "https://nominatim.openstreetmap.org/reverse"
-        f"?lat={lat_f}"
-        f"&lon={lon_f}"
-        "&format=json"
-        "&zoom=16"
-        "&addressdetails=1"
-    )
-
-
-    try:
-
-        req = urllib.request.Request(
-
-            url,
-
-            headers={
-                "User-Agent":
-                    "GALERT-Galamsey-Monitor/1.0",
-                "Accept":
-                    "application/json"
-            }
-
-        )
-
-
-        with urllib.request.urlopen(
-            req,
-            timeout=3.5
-        ) as response:
-
-            data = json.loads(
-                response
-                .read()
-                .decode("utf-8")
+    # 1. Official Google Maps Geocoding API (if GOOGLE_MAPS_API_KEY is provided)
+    if GOOGLE_MAPS_API_KEY:
+        try:
+            g_url = (
+                "https://maps.googleapis.com/maps/api/geocode/json"
+                f"?latlng={lat_f},{lon_f}&key={GOOGLE_MAPS_API_KEY}"
             )
-
-
-            address = data.get(
-                "address",
-                {}
+            req = urllib.request.Request(
+                g_url,
+                headers={"User-Agent": "GALERT-Galamsey-Monitor/1.0"}
             )
+            with urllib.request.urlopen(req, timeout=4.0) as response:
+                g_data = json.loads(response.read().decode("utf-8"))
+                if g_data.get("status") == "OK" and g_data.get("results"):
+                    resolved = g_data["results"][0].get("formatted_address")
+        except Exception as e:
+            print(f"[GEOCODE] Google Maps API request error: {e}")
 
-
-            parts = []
-
-
-            road = address.get(
-                "road"
+    # 2. High-accuracy Google-aligned reverse geocoding (accurate town/locality/district)
+    if not resolved:
+        try:
+            bdc_url = (
+                "https://api.bigdatacloud.net/data/reverse-geocode-client"
+                f"?latitude={lat_f}&longitude={lon_f}&localityLanguage=en"
             )
-
-
-            suburb = (
-                address.get("suburb")
-                or address.get("neighbourhood")
-                or address.get("village")
+            req = urllib.request.Request(
+                bdc_url,
+                headers={"User-Agent": "GALERT-Monitor/1.0"}
             )
+            with urllib.request.urlopen(req, timeout=4.0) as response:
+                bdc_data = json.loads(response.read().decode("utf-8"))
+                locality = bdc_data.get("locality") or bdc_data.get("city")
+                subdivision = bdc_data.get("principalSubdivision")
+                country = bdc_data.get("countryName", "Ghana")
 
+                parts = []
+                if locality:
+                    parts.append(locality)
+                if subdivision and subdivision not in parts:
+                    parts.append(subdivision)
+                if country and country not in parts:
+                    parts.append(country)
 
-            town = (
-                address.get("town")
-                or address.get("city")
-                or address.get("municipality")
-                or address.get("county")
-            )
+                if parts:
+                    resolved = ", ".join(parts)
+        except Exception as e:
+            print(f"[GEOCODE] Reverse geocode error: {e}")
 
+    # Fallback to coordinates
+    if not resolved:
+        resolved = f"Coordinates {lat_f:.4f}, {lon_f:.4f} (Ghana)"
 
-            state = address.get(
-                "state"
-            )
-
-
-            country = address.get(
-                "country",
-                "Ghana"
-            )
-
-
-            if road and suburb:
-
-                parts.append(
-                    f"{road}, {suburb}"
-                )
-
-            elif suburb:
-
-                parts.append(
-                    suburb
-                )
-
-            elif road:
-
-                parts.append(
-                    road
-                )
-
-
-            if town and town not in parts:
-
-                parts.append(
-                    town
-                )
-
-
-            if state and state not in parts:
-
-                parts.append(
-                    state
-                )
-
-
-            if country and country not in parts:
-
-                parts.append(
-                    country
-                )
-
-
-            resolved = (
-
-                ", ".join(parts)
-
-                if parts
-
-                else data.get(
-                    "display_name",
-                    f"{lat_f:.4f}, {lon_f:.4f}"
-                )
-
-            )
-
-
-            _GEO_CACHE[
-                cache_key
-            ] = resolved
-
-
-            return resolved
-
-
-    except Exception:
-
-        fallback = (
-            f"Coordinates "
-            f"{lat_f:.4f}, "
-            f"{lon_f:.4f} "
-            f"(Ghana)"
-        )
-
-
-        _GEO_CACHE[
-            cache_key
-        ] = fallback
-
-
-        return fallback
+    _GEO_CACHE[cache_key] = resolved
+    return resolved
 
 
 # ============================================================
