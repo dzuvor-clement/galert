@@ -448,9 +448,9 @@ _GEO_CACHE = {}
 def get_reverse_geocode(lat, lon):
     """
     Converts GPS coordinates into real place names.
-    Uses Google Maps Geocoding API (when GOOGLE_MAPS_API_KEY is configured)
-    and Google-aligned reverse geocoding to retrieve accurate locality,
-    town, district, and region names in Ghana instead of OSM.
+    Resolves granular landmark, school, building, or neighborhood level
+    (e.g. 'Ho, Volta Region, Mawuli School') rather than just generic city names.
+    Supports official Google Maps Geocoding API and high-resolution reverse geocoding.
     """
     if lat is None or lon is None:
         return "Unknown Location (No GPS fix)"
@@ -485,7 +485,60 @@ def get_reverse_geocode(lat, lon):
         except Exception as e:
             print(f"[GEOCODE] Google Maps API request error: {e}")
 
-    # 2. High-accuracy Google-aligned reverse geocoding (accurate town/locality/district)
+    # 2. Granular Landmark / School / Building / Neighborhood Resolution (zoom=18)
+    if not resolved:
+        try:
+            gran_url = (
+                "https://nominatim.openstreetmap.org/reverse"
+                f"?lat={lat_f}&lon={lon_f}&format=json&zoom=18&addressdetails=1"
+            )
+            req = urllib.request.Request(
+                gran_url,
+                headers={"User-Agent": "GALERT-Galamsey-Monitor/2.0 (hardware-iot)"}
+            )
+            with urllib.request.urlopen(req, timeout=4.0) as response:
+                g_data = json.loads(response.read().decode("utf-8"))
+                addr = g_data.get("address", {})
+
+                landmark = (
+                    g_data.get("name")
+                    or addr.get("amenity")
+                    or addr.get("school")
+                    or addr.get("building")
+                    or addr.get("hospital")
+                    or addr.get("church")
+                    or addr.get("place_of_worship")
+                    or addr.get("college")
+                    or addr.get("university")
+                    or addr.get("tourism")
+                    or addr.get("leisure")
+                    or addr.get("shop")
+                )
+
+                suburb = addr.get("suburb") or addr.get("neighbourhood") or addr.get("village")
+                road = addr.get("road")
+                city = addr.get("city") or addr.get("town") or addr.get("municipality") or addr.get("county")
+                state = addr.get("state")
+
+                # Format as requested: e.g. "Ho, Volta Region, Mawuli School"
+                parts = []
+                if city:
+                    parts.append(city)
+                if state and state not in parts:
+                    parts.append(state)
+                if landmark and landmark not in parts:
+                    parts.append(landmark)
+                elif suburb and suburb not in parts:
+                    parts.append(suburb)
+                elif road and road not in parts:
+                    parts.append(road)
+
+                if parts:
+                    resolved = ", ".join(parts)
+        except Exception as e:
+            print(f"[GEOCODE] Granular place lookup error: {e}")
+
+    # 3. High-accuracy Administrative fallback (BigDataCloud)
     if not resolved:
         try:
             bdc_url = (
