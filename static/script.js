@@ -152,8 +152,20 @@ function switchTab(targetTab) {
         document.getElementById("pageSubtitle").textContent = meta.sub;
     }
 
-    if (targetTab === "dashboard" && map)     setTimeout(() => map.invalidateSize(), 50);
-    if (targetTab === "map"       && mapFull) setTimeout(() => mapFull.invalidateSize(), 50);
+    if (targetTab === "dashboard" && map) {
+        setTimeout(() => {
+            map.invalidateSize();
+            const dev = getActiveDevice();
+            if (dev && dev.lat && dev.lon) map.setView([dev.lat, dev.lon], 15);
+        }, 80);
+    }
+    if (targetTab === "map" && mapFull) {
+        setTimeout(() => {
+            mapFull.invalidateSize();
+            const dev = getActiveDevice();
+            if (dev && dev.lat && dev.lon) mapFull.setView([dev.lat, dev.lon], 15);
+        }, 80);
+    }
 }
 
 document.addEventListener("click", e => {
@@ -417,23 +429,53 @@ addAllMarkersToMap(mapFull, placeholderMapFullMarkers);
 
 
 function updateMaps(lat, lon) {
-    if (mapCentred) return;
+    if (lat == null || lon == null || isNaN(lat) || isNaN(lon)) return;
+    if (lat === 0 && lon === 0) return;
 
-    const pos    = [lat, lon];
-    const allPts = [pos, ...PLACEHOLDER_IDS.map(id => [DEVICES[id].lat, DEVICES[id].lon])];
-    const bounds = L.latLngBounds(allPts).pad(0.15);
+    // Keep GALERT-01 coordinates synchronized with real GPS
+    DEVICES['GALERT-01'].lat = lat;
+    DEVICES['GALERT-01'].lon = lon;
 
-    // Mini map
-    marker = L.marker(pos).addTo(map);
-    marker.bindPopup(popupForLive()).openPopup();
-    map.fitBounds(bounds);
-    mapCentred = true;
+    const pos = [lat, lon];
+    const livePopup = popupForLive();
 
-    // Full map
-    markerFull = L.marker(pos).addTo(mapFull);
-    markerFull.bindPopup(popupForLive());
-    mapFull.fitBounds(bounds);
-    mapFullCentred = true;
+    // 1. Mini map (Dashboard)
+    if (map) {
+        if (!marker) {
+            marker = L.marker(pos).addTo(map);
+            marker.bindPopup(livePopup);
+        } else {
+            marker.setLatLng(pos);
+            marker.setPopupContent(livePopup);
+        }
+
+        if (!mapCentred) {
+            // First valid GPS lock: zoom directly to device location
+            map.setView(pos, 15);
+            mapCentred = true;
+            marker.openPopup();
+        } else if (activeDeviceId === 'GALERT-01') {
+            map.panTo(pos);
+        }
+    }
+
+    // 2. Full map (Map Tab)
+    if (mapFull) {
+        if (!markerFull) {
+            markerFull = L.marker(pos).addTo(mapFull);
+            markerFull.bindPopup(livePopup);
+        } else {
+            markerFull.setLatLng(pos);
+            markerFull.setPopupContent(livePopup);
+        }
+
+        if (!mapFullCentred) {
+            mapFull.setView(pos, 15);
+            mapFullCentred = true;
+        } else if (activeDeviceId === 'GALERT-01') {
+            mapFull.panTo(pos);
+        }
+    }
 }
 
 function popupForLive() {
@@ -497,6 +539,14 @@ function popupForLive() {
                 <tr style="border-bottom:1px solid #f3f4f6;">
                     <td style="padding:5px 0;color:#6b7280;">Pressure</td>
                     <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${press}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Latitude</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${(d.data && d.data.latitude != null) ? d.data.latitude.toFixed(6) : (d.lat ? d.lat.toFixed(6) : '--')}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:5px 0;color:#6b7280;">Longitude</td>
+                    <td style="padding:5px 0;font-weight:600;color:#111827;text-align:right;">${(d.data && d.data.longitude != null) ? d.data.longitude.toFixed(6) : (d.lon ? d.lon.toFixed(6) : '--')}</td>
                 </tr>
                 <tr>
                     <td style="padding:5px 0;color:#6b7280;">Satellites</td>
@@ -626,12 +676,12 @@ function selectDevice(id) {
     const dev = DEVICES[id];
     if (dev && dev.lat && dev.lon) {
         if (map) {
-            map.panTo([dev.lat, dev.lon]);
+            map.setView([dev.lat, dev.lon], 15);
             if (id === 'GALERT-01' && marker) marker.openPopup();
             else if (placeholderMapMarkers[id]) placeholderMapMarkers[id].openPopup();
         }
         if (mapFull) {
-            mapFull.panTo([dev.lat, dev.lon]);
+            mapFull.setView([dev.lat, dev.lon], 15);
             if (id === 'GALERT-01' && markerFull) markerFull.openPopup();
             else if (placeholderMapFullMarkers[id]) placeholderMapFullMarkers[id].openPopup();
         }
@@ -838,14 +888,22 @@ function renderMapPage(data) {
         }
     }
 
-    if (data.gps_fixed) {
+    if (data.gps_fixed && data.latitude != null && data.longitude != null) {
         document.getElementById("m-lat").textContent = data.latitude.toFixed(6);
         document.getElementById("m-lon").textContent = data.longitude.toFixed(6);
-        document.getElementById("m-alt").textContent = data.altitude.toFixed(1);
+        document.getElementById("m-alt").textContent = data.altitude != null ? data.altitude.toFixed(1) : "--";
 
         const gmLink   = document.getElementById("mapGoogleLink");
-        gmLink.href    = `https://www.google.com/maps?q=${data.latitude},${data.longitude}`;
-        gmLink.style.display = "inline-flex";
+        if (gmLink) {
+            gmLink.href    = `https://www.google.com/maps?q=${data.latitude},${data.longitude}`;
+            gmLink.style.display = "inline-flex";
+        }
+    } else {
+        document.getElementById("m-lat").textContent = "--";
+        document.getElementById("m-lon").textContent = "--";
+        document.getElementById("m-alt").textContent = "--";
+        const gmLink = document.getElementById("mapGoogleLink");
+        if (gmLink) gmLink.style.display = "none";
     }
 }
 
@@ -938,7 +996,9 @@ async function getSensorData() {
         }
 
         // Always update maps with live GPS
-        if (data.gps_fixed) updateMaps(data.latitude, data.longitude);
+        if (data.gps_fixed && data.latitude != null && data.longitude != null) {
+            updateMaps(data.latitude, data.longitude);
+        }
 
     } catch (err) {
         console.error("Sensor data error:", err);
