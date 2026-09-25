@@ -969,12 +969,15 @@ function renderAlerts(alerts) {
             ? `<span class="email-sent"><i data-lucide="mail-check" class="inline-icon"></i> Sent</span>`
             : `<span class="email-fail"><i data-lucide="mail-x" class="inline-icon"></i> Failed</span>`;
 
+        const tempText = (a.temperature != null && !isNaN(a.temperature))
+            ? `${Number(a.temperature).toFixed(1)} °C`
+            : '--';
+
         return `<tr class="alert-row-${a.level.toLowerCase()}">
             <td>${a.timestamp}</td>
             <td>${levelBadge(a.level)}</td>
             <td>${a.vibration} m/s²</td>
-            <td>${a.gps_fixed ? "Fixed" : "No fix"}</td>
-            <td>${a.satellites}</td>
+            <td><strong style="color:var(--text-primary, #0f172a)">${tempText}</strong></td>
             <td>${emailCell}</td>
             <td>${locationCell}</td>
         </tr>`;

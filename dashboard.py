@@ -631,12 +631,18 @@ def init_db():
                     location_name TEXT,
 
                     email_sent INTEGER NOT NULL
-                        DEFAULT 0
+                        DEFAULT 0,
+
+                    temperature REAL
 
                 )
 
             """)
 
+            try:
+                conn.execute("ALTER TABLE alerts ADD COLUMN temperature REAL")
+            except Exception:
+                pass
 
             conn.commit()
 
@@ -675,10 +681,11 @@ def save_alert_to_db(record):
                     altitude,
                     satellites,
                     location_name,
-                    email_sent
+                    email_sent,
+                    temperature
                 )
 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             """, (
 
@@ -721,7 +728,11 @@ def save_alert_to_db(record):
                 1 if record.get(
                     "email_sent"
                 )
-                else 0
+                else 0,
+
+                record.get(
+                    "temperature"
+                )
 
             ))
 
@@ -776,7 +787,8 @@ def load_alerts_from_db(
                     altitude,
                     satellites,
                     location_name,
-                    email_sent
+                    email_sent,
+                    temperature
 
                 FROM alerts
 
@@ -827,7 +839,10 @@ def load_alerts_from_db(
                     "email_sent":
                         bool(
                             row["email_sent"]
-                        )
+                        ),
+
+                    "temperature":
+                        row["temperature"] if "temperature" in row.keys() else None
 
                 })
 
@@ -2316,6 +2331,11 @@ def record_alert(
         "email_sent":
             bool(
                 email_sent
+            ),
+
+        "temperature":
+            bmp_info.get(
+                "temperature"
             )
 
     }
