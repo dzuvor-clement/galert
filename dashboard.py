@@ -278,11 +278,11 @@ def init_hardware():
     # NEO-6M GPS
     # ========================================================
     if MOCK_HARDWARE:
-        gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=1)
+        gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=0.1)
         print("[HARDWARE] GPS: MOCK mode (simulated)")
     else:
         try:
-            gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=1)
+            gps_serial = serial.Serial(GPS_PORT, GPS_BAUDRATE, timeout=0.1)
             print(f"[HARDWARE] GPS serial connected on {GPS_PORT} @ {GPS_BAUDRATE} baud")
         except Exception as e:
             print(f"[HARDWARE WARNING] Could not open GPS serial port {GPS_PORT}: {e}")
@@ -361,11 +361,16 @@ CRITICAL_THRESHOLD = 0.50
 # ALERT SETTINGS
 # ============================================================
 
-HIGH_PERSISTENCE_SECONDS = 10
+HIGH_PERSISTENCE_SECONDS = float(os.getenv("HIGH_PERSISTENCE_SECONDS", "10"))
 
-CRITICAL_PERSISTENCE_SECONDS = 2
+CRITICAL_PERSISTENCE_SECONDS = float(os.getenv("CRITICAL_PERSISTENCE_SECONDS", "2"))
 
-ALERT_COOLDOWN_SECONDS = 600
+# Cooldown for HIGH alerts (defaults to 10 minutes)
+ALERT_COOLDOWN_SECONDS = int(os.getenv("HIGH_ALERT_COOLDOWN_SECONDS", "600"))
+
+# CRITICAL alerts fire immediately on every event.
+# If continuous critical vibration never stops, send follow-up reminder every 60s
+CRITICAL_REPEAT_SECONDS = int(os.getenv("CRITICAL_REPEAT_SECONDS", "60"))
 
 
 # ============================================================
@@ -734,10 +739,6 @@ def save_alert_to_db(record):
                     satellites,
                     location_name,
                     email_sent
-                     temperature,
-                     pressure,
-                     environment_altitude
-
                 )
 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -931,6 +932,9 @@ high_start_time = None
 critical_start_time = None
 
 last_alert_time = 0
+last_critical_alert_time = 0
+last_high_alert_time = 0
+critical_alert_in_progress = False
 
 
 # ============================================================
@@ -1253,11 +1257,16 @@ def read_gps():
         return None
 
     try:
+        # Don't block if there is no data waiting in the serial buffer
+        if hasattr(gps_serial, 'in_waiting') and gps_serial.in_waiting == 0:
+            return None
+
         latest_gga = None
         latest_rmc = None
 
         # Read available lines (up to 10) to get the most up-to-date position
-        lines_to_read = max(1, min(10, getattr(gps_serial, 'in_waiting', 0) // 30 or 5))
+        available_bytes = getattr(gps_serial, 'in_waiting', 60)
+        lines_to_read = max(1, min(10, available_bytes // 25))
 
         for _ in range(lines_to_read):
             raw_line = gps_serial.readline()
@@ -1329,6 +1338,8 @@ def send_email_alert(
 ):
 
     global last_alert_time
+    global last_critical_alert_time
+    global last_high_alert_time
 
 
     # ========================================================
@@ -2140,7 +2151,12 @@ Human field investigation is recommended.
 
         # Only update cooldown after successful email
 
-        last_alert_time = time.time()
+        now = time.time()
+        last_alert_time = now
+        if level == "CRITICAL":
+            last_critical_alert_time = now
+        elif level == "HIGH":
+            last_high_alert_time = now
 
 
         return True
@@ -2429,147 +2445,113 @@ def check_alert(
     vibration,
     gps_info
 ):
-
     global high_start_time
-
     global critical_start_time
-
     global last_alert_time
-
+    global last_critical_alert_time
+    global last_high_alert_time
+    global critical_alert_in_progress
 
     current_time = time.time()
 
-
     # ========================================================
-    # NORMAL
+    # NORMAL — Reset all timers; cancel any in-progress countdowns
     # ========================================================
-
     if level == "NORMAL":
+        if critical_start_time is not None:
+            elapsed = current_time - critical_start_time
+            print(f"[ALERT] Critical vibration ceased after {elapsed:.1f}s (< {CRITICAL_PERSISTENCE_SECONDS:.1f}s). Alert timer cancelled -- no email sent.")
+        if high_start_time is not None:
+            elapsed = current_time - high_start_time
+            print(f"[ALERT] High vibration ceased after {elapsed:.1f}s (< {HIGH_PERSISTENCE_SECONDS:.1f}s). Alert timer cancelled.")
+        if critical_alert_in_progress:
+            print("[ALERT] Critical vibration event ended. System returned to NORMAL.")
 
         high_start_time = None
-
         critical_start_time = None
-
+        critical_alert_in_progress = False
         return
 
-
     # ========================================================
-    # CRITICAL
+    # CRITICAL — Vibration MUST stay continuously critical for 2.0s before sending mail
     # ========================================================
-
     if level == "CRITICAL":
-
         high_start_time = None
 
-
-        if critical_start_time is None:
-
-            critical_start_time = (
-                current_time
-            )
-
-            print(
-                "CRITICAL activity detected. "
-                "Starting 2-second timer..."
-            )
-
-
-        elapsed = (
-            current_time
-            -
-            critical_start_time
-        )
-
-
-        if (
-            elapsed
-            >=
-            CRITICAL_PERSISTENCE_SECONDS
-        ):
-
-            if (
-                current_time
-                -
-                last_alert_time
-                >=
-                ALERT_COOLDOWN_SECONDS
-            ):
-
-                print(
-                    "CRITICAL activity persisted."
-                )
-
-
+        # If alert has already been sent for this continuous vibration event:
+        if critical_alert_in_progress:
+            if current_time - last_critical_alert_time >= CRITICAL_REPEAT_SECONDS:
+                print(f"[ALERT] [CRITICAL] Continuous activity sustained over {CRITICAL_REPEAT_SECONDS}s ({vibration:.3f} m/s^2). Sending follow-up alert...")
                 record_alert(
                     level,
                     vibration,
                     gps_info
                 )
+                last_critical_alert_time = current_time
+                last_alert_time = current_time
+            return
 
+        # Start the continuous 2-second countdown
+        if critical_start_time is None:
+            critical_start_time = current_time
+            print(f"[ALERT] Critical vibration detected ({vibration:.3f} m/s^2). Monitoring: must stay continuously critical for {CRITICAL_PERSISTENCE_SECONDS:.1f}s before sending email...")
+            return
 
-            critical_start_time = None
+        elapsed = current_time - critical_start_time
 
+        # Vibration must continuously persist for at least CRITICAL_PERSISTENCE_SECONDS (2.0s)
+        if elapsed < CRITICAL_PERSISTENCE_SECONDS:
+            print(f"[ALERT] Sustained critical vibration: {elapsed:.1f}s / {CRITICAL_PERSISTENCE_SECONDS:.1f}s (current: {vibration:.3f} m/s^2)...")
+            return
 
+        # Threshold satisfied: 2.0 continuous seconds reached!
+        print(f"[ALERT] [CRITICAL CONFIRMED] Vibration sustained for {elapsed:.1f}s (>= {CRITICAL_PERSISTENCE_SECONDS:.1f}s). Dispatching email alert immediately...")
+        record_alert(
+            level,
+            vibration,
+            gps_info
+        )
+        last_critical_alert_time = current_time
+        last_alert_time = current_time
+        critical_alert_in_progress = True
+        critical_start_time = None
         return
 
-
     # ========================================================
-    # HIGH
+    # HIGH — Standard persistent activity with cooldown
     # ========================================================
-
     if level == "HIGH":
+        if critical_start_time is not None:
+            elapsed = current_time - critical_start_time
+            print(f"[ALERT] Critical vibration dropped to HIGH after {elapsed:.1f}s (< {CRITICAL_PERSISTENCE_SECONDS:.1f}s). Critical timer cancelled.")
+        if critical_alert_in_progress:
+            print("[ALERT] Critical vibration dropped to HIGH.")
 
         critical_start_time = None
-
+        critical_alert_in_progress = False
 
         if high_start_time is None:
+            high_start_time = current_time
+            print(f"[ALERT] HIGH activity detected ({vibration:.3f} m/s²). Starting {HIGH_PERSISTENCE_SECONDS:.1f}s timer...")
+            return
 
-            high_start_time = (
-                current_time
-            )
+        elapsed = current_time - high_start_time
 
-            print(
-                "HIGH activity detected. "
-                "Starting 10-second timer..."
-            )
-
-
-        elapsed = (
-            current_time
-            -
-            high_start_time
-        )
-
-
-        if (
-            elapsed
-            >=
-            HIGH_PERSISTENCE_SECONDS
-        ):
-
-            if (
-                current_time
-                -
-                last_alert_time
-                >=
-                ALERT_COOLDOWN_SECONDS
-            ):
-
-                print(
-                    "HIGH activity persisted."
-                )
-
-
+        if elapsed >= HIGH_PERSISTENCE_SECONDS:
+            if current_time - last_high_alert_time >= ALERT_COOLDOWN_SECONDS:
+                print(f"[ALERT] HIGH activity persisted for {elapsed:.1f}s ({vibration:.3f} m/s²). Sending alert...")
                 record_alert(
                     level,
                     vibration,
                     gps_info
                 )
-
+                last_high_alert_time = current_time
+                last_alert_time = current_time
+            else:
+                remaining = int(ALERT_COOLDOWN_SECONDS - (current_time - last_high_alert_time))
+                print(f"[ALERT] HIGH activity detected but on cooldown ({remaining}s remaining). Skipping email.")
 
             high_start_time = None
-
-
         return
 
 
