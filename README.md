@@ -84,14 +84,14 @@ nano .env
 ```
 Ensure `MOCK_HARDWARE=false` to use real sensors.
 
-For email alerts, the project now prefers Resend:
+For alerts, the project now prefers Arkesel SMS:
 ```env
-RESEND_API_KEY=re_xxxxxxxxx
-RESEND_FROM_EMAIL=alerts@yourdomain.com
-EMAIL_RECEIVER=you@example.com
+ARKESEL_API_KEY=your_arkesel_api_key
+ARKESEL_SENDER_ID=GALERT
+ARKESEL_PHONE=233XXXXXXXXX
 ```
 
-Important: the sender address must be a verified sender in your Resend account. If Resend is not configured, the app falls back to Gmail SMTP using `EMAIL_SENDER` + `EMAIL_PASSWORD`.
+If SMS is not configured, the app falls back to Resend email, and then Gmail SMTP if needed. The receiver for email is still `EMAIL_RECEIVER` and the sender must be a verified Resend sender.
 
 ### 4. Run the Dashboard
 ```bash

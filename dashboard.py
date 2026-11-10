@@ -29,6 +29,10 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL") or EMAIL_SENDER
 
+ARKESEL_API_KEY = os.getenv("ARKESEL_API_KEY")
+ARKESEL_SENDER_ID = os.getenv("ARKESEL_SENDER_ID", "GALERT")
+ARKESEL_PHONE = os.getenv("ARKESEL_PHONE")
+
 
 # ============================================================
 # LINUX / HARDWARE AUTO-DETECTION
@@ -1281,6 +1285,91 @@ def read_gps():
 
 
 # ============================================================
+# SEND SMS ALERT VIA ARKESEL
+# ============================================================
+
+def send_arkesel_sms(
+    level,
+    vibration,
+    gps_info,
+    alert_time=None
+):
+
+    print("[SMS DEBUG] Starting Arkesel send flow...")
+
+    if not ARKESEL_API_KEY:
+        print("[SMS ERROR] ARKESEL_API_KEY is not configured.")
+        return False
+
+    if not ARKESEL_PHONE:
+        print("[SMS ERROR] ARKESEL_PHONE is not configured.")
+        return False
+
+    if not alert_time:
+        alert_time = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    latitude = gps_info.get("latitude")
+    longitude = gps_info.get("longitude")
+    gps_fixed = bool(gps_info.get("gps_fixed", False))
+
+    if gps_fixed and latitude is not None and longitude is not None:
+        location_text = f"lat {latitude:.5f}, lon {longitude:.5f}"
+    else:
+        location_text = "location unavailable"
+
+    message = (
+        f"GALERT {level} ALERT: vibration {vibration:.3f} m/s² at {alert_time}. "
+        f"Status: {location_text}."
+    )
+
+    print(f"[SMS DEBUG] Level={level} Vibration={vibration:.3f} Time={alert_time}")
+    print(f"[SMS DEBUG] Recipient={ARKESEL_PHONE} Sender={ARKESEL_SENDER_ID}")
+    print(f"[SMS DEBUG] Message={message}")
+
+    payload = {
+        "api_key": ARKESEL_API_KEY,
+        "sender": ARKESEL_SENDER_ID,
+        "message": message,
+        "recipients": [ARKESEL_PHONE],
+    }
+
+    print(f"[SMS DEBUG] Payload={json.dumps(payload, ensure_ascii=True)}")
+
+    try:
+        request = urllib.request.Request(
+            "https://api.arkesel.com/api/v1/sms/send",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+
+        print("[SMS DEBUG] Sending HTTP request to Arkesel...")
+
+        with urllib.request.urlopen(request, timeout=20) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            print(f"[SMS DEBUG] Arkesel HTTP status={response.status}")
+            print(f"[SMS DEBUG] Arkesel response body={response_body}")
+
+        print("[SMS] Alert sent successfully via Arkesel.")
+        return True
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        print(f"[SMS ERROR] HTTPError status={e.code}")
+        print(f"[SMS ERROR] HTTPError body={error_body}")
+        return False
+    except urllib.error.URLError as e:
+        print(f"[SMS ERROR] URLError: {e}")
+        return False
+    except Exception as e:
+        print(f"[SMS ERROR] {type(e).__name__}: {e}")
+        return False
+
+
+# ============================================================
 # SEND EMAIL ALERT
 # ============================================================
 
@@ -2231,13 +2320,39 @@ def record_alert(
 
 
     # --------------------------------------------------------
-    # Email
+    # SMS / Email notification
     # --------------------------------------------------------
 
     email_sent = False
 
 
-    if (
+    if ARKESEL_API_KEY and ARKESEL_PHONE:
+
+        try:
+
+            print(
+                f"Sending SMS alert for "
+                f"{level} activity..."
+            )
+
+            email_sent = bool(
+                send_arkesel_sms(
+                    level,
+                    vibration,
+                    gps_info,
+                    alert_time
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                f"[SMS ERROR] {e}"
+            )
+
+            email_sent = False
+
+    elif (
         EMAIL_SENDER
         and EMAIL_PASSWORD
         and EMAIL_RECEIVER
@@ -2250,25 +2365,15 @@ def record_alert(
                 f"{level} activity..."
             )
 
-
             email_sent = bool(
-
                 send_email_alert(
-
                     level,
-
                     vibration,
-
                     gps_info,
-
                     bmp_info,
-
                     alert_time
-
                 )
-
             )
-
 
         except Exception as e:
 
@@ -2277,8 +2382,6 @@ def record_alert(
             )
 
             email_sent = False
-
-
     else:
 
         print(
