@@ -2331,7 +2331,7 @@ def record_alert(
         try:
 
             print(
-                f"Sending SMS alert for "
+                f"[SMS] Sending SMS alert for "
                 f"{level} activity..."
             )
 
@@ -2344,11 +2344,20 @@ def record_alert(
                 )
             )
 
+            if level == "CRITICAL":
+                if email_sent:
+                    print("[CRITICAL SMS] SUCCESS: SMS sent via Arkesel.")
+                else:
+                    print("[CRITICAL SMS] FAILURE: SMS was not sent via Arkesel.")
+
         except Exception as e:
 
             print(
                 f"[SMS ERROR] {e}"
             )
+
+            if level == "CRITICAL":
+                print("[CRITICAL SMS] FAILURE: SMS send raised an exception.")
 
             email_sent = False
 
@@ -2537,9 +2546,14 @@ def record_alert(
         f"[ALERT RECORDED IN DB] "
         f"{level} at {location_name} | "
         f"Vibration: {vibration:.3f} m/s² | "
-        f"Email Sent: {email_sent}"
+        f"Notification Sent: {email_sent}"
     )
 
+    if level == "CRITICAL":
+        if email_sent:
+            print(f"[CRITICAL ALERT CONFIRMED] SMS notification succeeded for critical event at {alert_time}.")
+        else:
+            print(f"[CRITICAL ALERT CONFIRMED] SMS notification failed for critical event at {alert_time}.")
 
     return alert_record
 
