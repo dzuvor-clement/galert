@@ -26,6 +26,9 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL") or EMAIL_SENDER
+
 
 # ============================================================
 # LINUX / HARDWARE AUTO-DETECTION
@@ -1298,24 +1301,27 @@ def send_email_alert(
     # EMAIL CONFIGURATION
     # ========================================================
 
-    if not EMAIL_SENDER:
+    if RESEND_API_KEY and RESEND_FROM_EMAIL:
+        pass
+    else:
+        if not EMAIL_SENDER:
 
-        print(
-            "[EMAIL ERROR] "
-            "EMAIL_SENDER is not configured."
-        )
+            print(
+                "[EMAIL ERROR] "
+                "EMAIL_SENDER is not configured."
+            )
 
-        return False
+            return False
 
 
-    if not EMAIL_PASSWORD:
+        if not EMAIL_PASSWORD:
 
-        print(
-            "[EMAIL ERROR] "
-            "EMAIL_PASSWORD is not configured."
-        )
+            print(
+                "[EMAIL ERROR] "
+                "EMAIL_PASSWORD is not configured."
+            )
 
-        return False
+            return False
 
 
     if not EMAIL_RECEIVER:
@@ -2053,52 +2059,94 @@ Human field investigation is recommended.
 
 
         # ====================================================
-        # CONNECT TO GMAIL
+        # SEND VIA RESEND (preferred) or Gmail SMTP fallback
         # ====================================================
 
-        print(
-            "[EMAIL] Connecting to Gmail SMTP..."
-        )
-
-
-        with smtplib.SMTP(
-            "smtp.gmail.com",
-            587,
-            timeout=20
-        ) as server:
+        if RESEND_API_KEY and RESEND_FROM_EMAIL:
 
             print(
-                "[EMAIL] Starting TLS..."
+                "[EMAIL] Sending alert via Resend..."
+            )
+
+            payload = json.dumps({
+                "from": RESEND_FROM_EMAIL,
+                "to": [EMAIL_RECEIVER],
+                "subject": subject,
+                "html": html_body,
+                "text": plain_text,
+            }).encode("utf-8")
+
+            request = urllib.request.Request(
+                "https://api.resend.com/emails",
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                method="POST"
+            )
+
+            try:
+                with urllib.request.urlopen(request, timeout=20) as response:
+                    response_text = response.read().decode("utf-8")
+                    print(f"[EMAIL] Resend response: {response_text}")
+            except urllib.error.HTTPError as e:
+                response_body = e.read().decode("utf-8", errors="replace")
+                print(f"[EMAIL ERROR] Resend rejected the request: {e.code} {response_body}")
+                return False
+            except urllib.error.URLError as e:
+                print(f"[EMAIL ERROR] Resend request failed: {e}")
+                return False
+
+            print(
+                "[EMAIL] Alert sent successfully via Resend."
+            )
+
+        else:
+
+            print(
+                "[EMAIL] Connecting to Gmail SMTP..."
             )
 
 
-            server.starttls()
+            with smtplib.SMTP(
+                "smtp.gmail.com",
+                587,
+                timeout=20
+            ) as server:
+
+                print(
+                    "[EMAIL] Starting TLS..."
+                )
+
+
+                server.starttls()
+
+
+                print(
+                    "[EMAIL] Logging into Gmail..."
+                )
+
+
+                server.login(
+                    EMAIL_SENDER,
+                    EMAIL_PASSWORD
+                )
+
+
+                print(
+                    "[EMAIL] Sending message..."
+                )
+
+
+                server.send_message(
+                    message
+                )
 
 
             print(
-                "[EMAIL] Logging into Gmail..."
+                "[EMAIL] Alert sent successfully via Gmail SMTP."
             )
-
-
-            server.login(
-                EMAIL_SENDER,
-                EMAIL_PASSWORD
-            )
-
-
-            print(
-                "[EMAIL] Sending message..."
-            )
-
-
-            server.send_message(
-                message
-            )
-
-
-        print(
-            "[EMAIL] Alert sent successfully."
-        )
 
 
         # Only update cooldown after successful email

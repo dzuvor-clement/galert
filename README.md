@@ -82,7 +82,16 @@ pip install -r requirements.txt
 cp .env.example .env
 nano .env
 ```
-Ensure `MOCK_HARDWARE=false` to use real sensors. Set your email credentials if you want email alerts.
+Ensure `MOCK_HARDWARE=false` to use real sensors.
+
+For email alerts, the project now prefers Resend:
+```env
+RESEND_API_KEY=re_xxxxxxxxx
+RESEND_FROM_EMAIL=alerts@yourdomain.com
+EMAIL_RECEIVER=you@example.com
+```
+
+Important: the sender address must be a verified sender in your Resend account. If Resend is not configured, the app falls back to Gmail SMTP using `EMAIL_SENDER` + `EMAIL_PASSWORD`.
 
 ### 4. Run the Dashboard
 ```bash
